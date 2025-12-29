@@ -1,0 +1,9 @@
+node_modules/
+dist/
+out/
+.wrangler/
+.dev.vars
+.env
+.env.*
+package-lock.json
+*.log
