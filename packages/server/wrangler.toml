@@ -1,0 +1,11 @@
+name = "vscode-chat"
+main = "src/index.ts"
+compatibility_date = "2025-12-29"
+
+[[durable_objects.bindings]]
+name = "CHAT_ROOM"
+class_name = "ChatRoom"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["ChatRoom"]

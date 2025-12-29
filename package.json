@@ -1,0 +1,41 @@
+{
+  "name": "vscode-chat-workspace",
+  "private": true,
+  "license": "Apache-2.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "postinstall": "npm --workspace @vscode-chat/protocol run build",
+    "build": "npm --workspaces run build",
+    "test": "npm --workspaces run test",
+    "lint": "npm --workspaces run lint",
+    "lint:eslint": "eslint .",
+    "lint:eslint:fix": "eslint . --fix",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "check": "npm run format:check && npm run lint:eslint && npm run lint && npm test",
+    "dev:server": "npm --workspace @vscode-chat/server run dev",
+    "dev:extension": "npm --workspace vscode-chat run watch"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "eslint": "^9.20.0",
+    "eslint-config-prettier": "^10.0.1",
+    "globals": "^15.14.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
+    "prettier": "^3.5.0",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.25.0"
+  },
+  "lint-staged": {
+    "*.{cjs,js,mjs,ts}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{css,json,md,toml,yaml,yml}": [
+      "prettier --write"
+    ]
+  }
+}

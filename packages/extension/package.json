@@ -1,0 +1,84 @@
+{
+  "name": "vscode-chat",
+  "displayName": "VS Code Chat",
+  "description": "A single shared chat room for VS Code using GitHub sign-in.",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Apache-2.0",
+  "publisher": "munawiki",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.cjs",
+  "activationEvents": [
+    "onView:vscodeChat.chatView",
+    "onCommand:vscodeChat.openChat",
+    "onCommand:vscodeChat.signIn"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "vscodeChat.openChat",
+        "title": "VS Code Chat: Open"
+      },
+      {
+        "command": "vscodeChat.signIn",
+        "title": "VS Code Chat: Sign in with GitHub"
+      }
+    ],
+    "configuration": {
+      "title": "VS Code Chat",
+      "properties": {
+        "vscodeChat.backendUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8787",
+          "description": "Backend base URL (e.g., https://<worker>.workers.dev)."
+        },
+        "vscodeChat.autoConnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-connect when the chat view is opened."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vscodeChat",
+          "title": "VS Code Chat",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "vscodeChat": [
+        {
+          "id": "vscodeChat.chatView",
+          "name": "Chat"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node ./esbuild.mjs",
+    "watch": "node ./esbuild.mjs --watch",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@vscode-chat/protocol": "0.0.1",
+    "ws": "^8.18.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/vscode": "^1.90.0",
+    "@types/ws": "^8.5.12",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}
