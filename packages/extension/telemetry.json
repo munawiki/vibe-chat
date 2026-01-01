@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "notes": [
+    "Telemetry is emitted only when VS Code telemetry is enabled.",
+    "No GitHub access tokens, backend session tokens, chat message text, GitHub user ids/logins, or backend URL values are collected."
+  ],
+  "events": [
+    {
+      "name": "vscodeChat.auth.exchange",
+      "description": "Backend session exchange outcomes.",
+      "fields": {
+        "outcome": "success | http_error | invalid_response | network_error",
+        "httpStatus": "number (optional)"
+      }
+    },
+    {
+      "name": "vscodeChat.ws.connect",
+      "description": "WebSocket connect outcomes, including whether a cached backend session was reused.",
+      "fields": {
+        "outcome": "success | handshake_http_error | network_error",
+        "httpStatus": "number (optional)",
+        "usedCachedSession": "boolean",
+        "recovered": "boolean (optional; true if a cached session was rejected and the client re-exchanged once)"
+      }
+    },
+    {
+      "name": "vscodeChat.ws.reconnect_scheduled",
+      "description": "Reconnect scheduling to diagnose disconnect/retry behavior.",
+      "fields": {
+        "attempt": "number",
+        "delayMs": "number"
+      }
+    }
+  ]
+}

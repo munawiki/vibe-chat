@@ -1,15 +1,21 @@
 import * as vscode from "vscode";
 import { ChatClient } from "./net/chatClient.js";
 import { ChatViewProvider } from "./ui/chatViewProvider.js";
+import { createExtensionTelemetry } from "./telemetry.js";
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("VS Code Chat", { log: true });
-  const client = new ChatClient(output);
+  const telemetry = createExtensionTelemetry({
+    output,
+    getBackendUrl: () => vscode.workspace.getConfiguration("vscodeChat").get<string>("backendUrl"),
+  });
+  const client = new ChatClient(output, telemetry);
   client.start();
   const provider = new ChatViewProvider(context, client, output);
 
   context.subscriptions.push(
     output,
+    telemetry,
     client,
     vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },

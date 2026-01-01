@@ -1,47 +1,52 @@
 import * as vscode from "vscode";
 import WebSocket from "ws";
+import { ClientEventSchema, PROTOCOL_VERSION, ServerEventSchema } from "@vscode-chat/protocol";
+import type { ClientEvent, ServerEvent } from "@vscode-chat/protocol";
+import type { ExtensionTelemetry } from "../telemetry.js";
+import { getGitHubSession, onDidChangeGitHubSessions } from "../adapters/vscodeAuth.js";
+import { autoConnectEnabled, getBackendUrl } from "../adapters/vscodeConfig.js";
+import { exchangeSession } from "../adapters/sessionExchange.js";
 import {
-  ClientEvent,
-  ClientEventSchema,
-  PROTOCOL_VERSION,
-  ServerEventSchema,
-} from "@vscode-chat/protocol";
+  cancelReconnectTimer,
+  scheduleReconnectTimer,
+  type ReconnectTimer,
+} from "../adapters/reconnectTimer.js";
+import { openWebSocket } from "../adapters/wsConnection.js";
+import {
+  initialChatClientCoreState,
+  reduceChatClientCore,
+  type ChatClientCoreCommand,
+  type ChatClientCoreEvent,
+  type ChatClientCoreState,
+  type ChatClientState,
+} from "../core/chatClientCore.js";
 
-type ConnectionStatus = "disconnected" | "connecting" | "connected";
-
-export type AuthStatus = "signedOut" | "signedIn";
-
-export type ChatClientState = {
-  authStatus: AuthStatus;
-  status: ConnectionStatus;
-  backendUrl?: string;
-  user?: { login: string; avatarUrl: string };
-};
-
-type SessionExchangeResponse = {
-  token: string;
-  expiresAt: string;
-  user: { githubUserId: string; login: string; avatarUrl: string };
-};
+export type { AuthStatus, ChatClientState } from "../core/chatClientCore.js";
 
 export class ChatClient implements vscode.Disposable {
   private ws: WebSocket | undefined;
-  private sessionToken: string | undefined;
-  private state: ChatClientState = { authStatus: "signedOut", status: "disconnected" };
-  private listeners = new Set<(state: ChatClientState) => void>();
-  private messageListeners = new Set<(event: unknown) => void>();
-  private reconnectTimer: NodeJS.Timeout | undefined;
-  private reconnectAttempt = 0;
+  private reconnectTimer: ReconnectTimer | undefined;
+  private readonly suppressedReconnect = new WeakSet<WebSocket>();
+
+  private core: ChatClientCoreState;
+  private state: ChatClientState;
+  private readonly listeners = new Set<(state: ChatClientState) => void>();
+  private readonly messageListeners = new Set<(event: ServerEvent) => void>();
   private readonly disposables: vscode.Disposable[] = [];
+  private runChain: Promise<void> = Promise.resolve();
 
-  private static readonly githubProviderId = "github";
-  private static readonly githubScopes = ["read:user"] as const;
-
-  constructor(private readonly output: vscode.LogOutputChannel) {}
+  constructor(
+    private readonly output: vscode.LogOutputChannel,
+    private readonly telemetry?: ExtensionTelemetry,
+  ) {
+    this.core = initialChatClientCoreState();
+    this.state = this.core.publicState;
+  }
 
   dispose(): void {
-    this.stopReconnect();
-    this.disconnect();
+    cancelReconnectTimer(this.reconnectTimer);
+    this.reconnectTimer = undefined;
+    this.closeSocket(1000, "dispose");
     for (const d of this.disposables) d.dispose();
     this.disposables.length = 0;
   }
@@ -52,7 +57,7 @@ export class ChatClient implements vscode.Disposable {
     return { dispose: () => this.listeners.delete(listener) };
   }
 
-  onEvent(listener: (event: unknown) => void): vscode.Disposable {
+  onEvent(listener: (event: ServerEvent) => void): vscode.Disposable {
     this.messageListeners.add(listener);
     return { dispose: () => this.messageListeners.delete(listener) };
   }
@@ -63,27 +68,24 @@ export class ChatClient implements vscode.Disposable {
 
   start(): void {
     this.disposables.push(
-      vscode.authentication.onDidChangeSessions((e) => {
-        if (e.provider.id !== ChatClient.githubProviderId) return;
-        void this.refreshAuthState();
+      onDidChangeGitHubSessions(() => {
+        this.run({ type: "auth/refresh.requested" }).catch((err) => {
+          this.output.warn(`auth refresh failed: ${String(err)}`);
+        });
       }),
     );
 
-    void this.refreshAuthState();
+    this.run({ type: "auth/refresh.requested" }).catch((err) => {
+      this.output.warn(`initial auth refresh failed: ${String(err)}`);
+    });
   }
 
   async refreshAuthState(): Promise<void> {
-    const session = await this.getGitHubSession({ interactive: false });
-    if (!session) {
-      this.setAuthStatus("signedOut");
-      return;
-    }
-    this.setAuthStatus("signedIn");
+    await this.run({ type: "auth/refresh.requested" });
   }
 
   async signIn(): Promise<void> {
-    await this.getGitHubSession({ interactive: true });
-    this.setAuthStatus("signedIn");
+    await this.run({ type: "ui/signIn" });
     this.output.info("GitHub session acquired.");
   }
 
@@ -92,62 +94,24 @@ export class ChatClient implements vscode.Disposable {
   }
 
   async connectInteractive(): Promise<void> {
-    const backendUrl = this.getBackendUrl();
-    this.stopReconnect();
-    this.setState({ ...this.state, backendUrl, status: "connecting" });
-
-    try {
-      const githubSession = await this.getGitHubSession({ interactive: true });
-      this.setAuthStatus("signedIn");
-      await this.connectWithGitHubSession(backendUrl, githubSession);
-    } catch (err) {
-      this.setState({ ...this.state, status: "disconnected" });
-      throw err;
-    }
+    const backendUrl = getBackendUrl();
+    await this.run({ type: "ui/connect", origin: "user", backendUrl, interactive: true });
   }
 
   async connectIfSignedIn(): Promise<boolean> {
-    const backendUrl = this.getBackendUrl();
-    this.stopReconnect();
-
-    const githubSession = await this.getGitHubSession({ interactive: false });
-    if (!githubSession) {
-      this.setAuthStatus("signedOut");
-      return false;
-    }
-
-    this.setAuthStatus("signedIn");
-    this.setState({ ...this.state, backendUrl, status: "connecting" });
-    try {
-      await this.connectWithGitHubSession(backendUrl, githubSession);
-      return true;
-    } catch (err) {
-      this.setState({ ...this.state, status: "disconnected" });
-      throw err;
-    }
+    const backendUrl = getBackendUrl();
+    await this.run({ type: "ui/connect", origin: "user", backendUrl, interactive: false });
+    return this.state.status === "connected";
   }
 
   async signInAndConnect(): Promise<void> {
-    const backendUrl = this.getBackendUrl();
-    this.stopReconnect();
-
-    const githubSession = await this.getGitHubSession({ interactive: true });
-    this.setAuthStatus("signedIn");
-    this.setState({ ...this.state, backendUrl, status: "connecting" });
-
-    try {
-      await this.connectWithGitHubSession(backendUrl, githubSession);
-    } catch (err) {
-      this.setState({ ...this.state, status: "disconnected" });
-      throw err;
-    }
+    await this.connectInteractive();
   }
 
   disconnect(): void {
-    this.stopReconnect();
-    this.closeSocket(1000, "client_disconnect");
-    this.sessionToken = undefined;
-    this.setState({ ...this.state, status: "disconnected" });
+    this.run({ type: "ui/disconnect" }).catch((err) => {
+      this.output.warn(`disconnect failed: ${String(err)}`);
+    });
   }
 
   sendMessage(text: string): void {
@@ -157,193 +121,126 @@ export class ChatClient implements vscode.Disposable {
       this.output.warn("Rejected client payload by schema.");
       return;
     }
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
       this.output.warn("WebSocket not open.");
       return;
     }
-    this.ws.send(JSON.stringify(payload));
-  }
 
-  private getBackendUrl(): string {
-    const cfg = vscode.workspace.getConfiguration("vscodeChat");
-    const url = cfg.get<string>("backendUrl");
-    if (!url) {
-      throw new Error("vscodeChat.backendUrl is required");
+    try {
+      ws.send(JSON.stringify(payload));
+    } catch (err) {
+      this.output.warn(`WebSocket send failed: ${String(err)}`);
     }
-    return url.replace(/\/+$/, "");
   }
 
-  private autoConnectEnabled(): boolean {
-    return vscode.workspace.getConfiguration("vscodeChat").get<boolean>("autoConnect", true);
+  private setState(next: ChatClientState): void {
+    this.state = next;
+    for (const listener of this.listeners) listener(this.state);
   }
 
-  private async getGitHubSession(options: {
-    interactive: true;
-  }): Promise<vscode.AuthenticationSession>;
-  private async getGitHubSession(options: {
-    interactive: false;
-  }): Promise<vscode.AuthenticationSession | undefined>;
-  private async getGitHubSession(options: {
-    interactive: boolean;
-  }): Promise<vscode.AuthenticationSession | undefined> {
-    if (options.interactive) {
-      return vscode.authentication.getSession(
-        ChatClient.githubProviderId,
-        ChatClient.githubScopes,
-        { createIfNone: true },
-      );
+  private run(event: ChatClientCoreEvent): Promise<void> {
+    const job = async (): Promise<void> => {
+      await this.process(event);
+    };
+
+    const next = this.runChain.then(job, job);
+    this.runChain = next;
+    return next;
+  }
+
+  private async process(event: ChatClientCoreEvent): Promise<void> {
+    const { state: next, commands } = reduceChatClientCore(this.core, event);
+    this.core = next;
+    this.setState(this.core.publicState);
+
+    for (const cmd of commands) {
+      const followUp = await this.execute(cmd);
+      if (followUp) await this.process(followUp);
     }
-
-    return vscode.authentication.getSession(ChatClient.githubProviderId, ChatClient.githubScopes, {
-      silent: true,
-    });
   }
 
-  private setAuthStatus(authStatus: AuthStatus): void {
-    if (authStatus === this.state.authStatus) return;
-
-    if (authStatus === "signedOut") {
-      this.stopReconnect();
-      this.closeSocket(1000, "auth_signed_out");
-      this.sessionToken = undefined;
-      const { user: _user, ...rest } = this.state;
-      const next: ChatClientState = {
-        ...rest,
-        authStatus: "signedOut",
-        status: "disconnected",
-      };
-      this.setState(next);
-      return;
-    }
-
-    this.setState({ ...this.state, authStatus: "signedIn" });
-  }
-
-  private async connectWithGitHubSession(
-    backendUrl: string,
-    githubSession: vscode.AuthenticationSession,
-  ): Promise<void> {
-    const exchange = await this.exchangeToken(backendUrl, githubSession.accessToken).catch(
-      (err) => {
-        const msg = String(err);
-        if (msg.includes("auth_exchange_failed_401") || msg.includes("auth_exchange_failed_403")) {
-          this.setAuthStatus("signedOut");
+  private async execute(cmd: ChatClientCoreCommand): Promise<ChatClientCoreEvent | void> {
+    switch (cmd.type) {
+      case "cmd/github.session.get": {
+        try {
+          const session = cmd.interactive
+            ? await getGitHubSession({ interactive: true })
+            : await getGitHubSession({ interactive: false });
+          const nowMs = Date.now();
+          return session
+            ? { type: "github/session.result", ok: true, session, nowMs }
+            : { type: "github/session.result", ok: false, nowMs };
+        } catch (err) {
+          return { type: "github/session.result", ok: false, nowMs: Date.now(), error: err };
         }
-        throw err;
-      },
-    );
-    this.sessionToken = exchange.token;
+      }
 
-    this.setState({
-      ...this.state,
-      status: "connecting",
-      backendUrl,
-      user: { login: exchange.user.login, avatarUrl: exchange.user.avatarUrl },
-    });
+      case "cmd/auth.exchange": {
+        const result = await exchangeSession(cmd.backendUrl, cmd.accessToken);
+        return result.ok
+          ? { type: "auth/exchange.result", ok: true, session: result.session }
+          : { type: "auth/exchange.result", ok: false, error: result.error };
+      }
 
-    await this.openWebSocket(backendUrl, exchange.token);
-  }
+      case "cmd/ws.open": {
+        this.closeSocket(1000, "reconnect");
 
-  private async exchangeToken(
-    backendUrl: string,
-    accessToken: string,
-  ): Promise<SessionExchangeResponse> {
-    const url = `${backendUrl}/auth/exchange`;
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ accessToken }),
-    });
+        const wsUrl = cmd.backendUrl.replace(/^http/, "ws") + "/ws";
+        const result = await openWebSocket({
+          wsUrl,
+          token: cmd.token,
+          onClose: (ws, code, reason) => this.onWsClose(ws, code, reason),
+          onMessage: (ws, text) => this.onWsMessage(ws, text),
+          onError: (ws, err) => this.onWsError(ws, err),
+        });
 
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(`auth_exchange_failed_${response.status}: ${text}`);
-    }
+        if (!result.ok) {
+          return { type: "ws/open.result", ok: false, error: result.error, cause: result.cause };
+        }
 
-    const json = (await response.json()) as unknown;
-    // minimal structural check (server already validates strictly)
-    if (!json || typeof json !== "object") {
-      throw new Error("auth_exchange_invalid_response");
-    }
-    return json as SessionExchangeResponse;
-  }
+        this.ws = result.ws;
+        try {
+          result.ws.send(
+            JSON.stringify({
+              version: PROTOCOL_VERSION,
+              type: "client/hello",
+              client: { name: "vscode", version: vscode.version },
+            } satisfies ClientEvent),
+          );
+        } catch (err) {
+          this.output.warn(`WebSocket hello failed: ${String(err)}`);
+        }
 
-  private async openWebSocket(backendUrl: string, token: string): Promise<void> {
-    this.closeSocket(1000, "reconnect");
+        return { type: "ws/open.result", ok: true };
+      }
 
-    const wsUrl = backendUrl.replace(/^http/, "ws") + `/ws?token=${encodeURIComponent(token)}`;
-    const ws = new WebSocket(wsUrl);
-    this.ws = ws;
-
-    ws.on("open", () => {
-      this.reconnectAttempt = 0;
-      this.setState({ ...this.state, status: "connected" });
-      ws.send(
-        JSON.stringify({
-          version: PROTOCOL_VERSION,
-          type: "client/hello",
-          client: { name: "vscode", version: vscode.version },
-        } satisfies ClientEvent),
-      );
-    });
-
-    ws.on("message", (data) => {
-      if (ws !== this.ws) return;
-      const text = typeof data === "string" ? data : data.toString("utf8");
-      let json: unknown;
-      try {
-        json = JSON.parse(text);
-      } catch {
-        this.output.warn("Invalid JSON from server.");
+      case "cmd/ws.close": {
+        this.closeSocket(cmd.code, cmd.reason);
         return;
       }
 
-      const parsed = ServerEventSchema.safeParse(json);
-      if (!parsed.success) {
-        this.output.warn("Invalid server event schema.");
+      case "cmd/reconnect.cancel": {
+        cancelReconnectTimer(this.reconnectTimer);
+        this.reconnectTimer = undefined;
         return;
       }
 
-      for (const listener of this.messageListeners) listener(parsed.data);
-    });
-
-    ws.on("close", (code, reason) => {
-      if (ws !== this.ws) return;
-      this.output.warn(`WebSocket closed: ${code} ${reason.toString()}`);
-      this.ws = undefined;
-      this.setState({ ...this.state, status: "disconnected" });
-      if (this.autoConnectEnabled() && this.state.authStatus === "signedIn")
-        this.scheduleReconnect();
-    });
-
-    ws.on("error", (err) => {
-      if (ws !== this.ws) return;
-      this.output.error(`WebSocket error: ${String(err)}`);
-    });
-  }
-
-  private scheduleReconnect(): void {
-    if (this.reconnectTimer) return;
-    const attempt = Math.min(this.reconnectAttempt, 6);
-    const delayMs = Math.min(30_000, 500 * Math.pow(2, attempt));
-    this.reconnectAttempt += 1;
-
-    this.reconnectTimer = setTimeout(async () => {
-      this.reconnectTimer = undefined;
-      try {
-        const attempted = await this.connectIfSignedIn();
-        if (!attempted) return;
-      } catch (err) {
-        this.output.warn(`Reconnect failed: ${String(err)}`);
-        this.scheduleReconnect();
+      case "cmd/reconnect.schedule": {
+        if (this.reconnectTimer) return;
+        this.reconnectTimer = scheduleReconnectTimer(cmd.delayMs, () => this.onReconnectTimer());
+        return;
       }
-    }, delayMs);
-  }
 
-  private stopReconnect(): void {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = undefined;
+      case "cmd/telemetry.send": {
+        this.telemetry?.send(cmd.event);
+        return;
+      }
+
+      case "cmd/raise": {
+        throw cmd.error;
+      }
     }
   }
 
@@ -351,6 +248,7 @@ export class ChatClient implements vscode.Disposable {
     const ws = this.ws;
     if (!ws) return;
     this.ws = undefined;
+    this.suppressedReconnect.add(ws);
     try {
       ws.close(code, reason);
     } catch {
@@ -358,8 +256,68 @@ export class ChatClient implements vscode.Disposable {
     }
   }
 
-  private setState(next: ChatClientState): void {
-    this.state = next;
-    for (const listener of this.listeners) listener(this.state);
+  private onWsError(ws: WebSocket, err: unknown): void {
+    if (ws !== this.ws) return;
+    this.output.error(`WebSocket error: ${String(err)}`);
+  }
+
+  private onWsClose(ws: WebSocket, code: number, reason: string): void {
+    if (ws !== this.ws) return;
+    this.ws = undefined;
+
+    const suppressed = this.suppressedReconnect.has(ws);
+    if (suppressed) this.suppressedReconnect.delete(ws);
+
+    this.output.warn(`WebSocket closed: ${code} ${reason}`);
+
+    this.run({
+      type: "ws/closed",
+      autoReconnectEnabled: autoConnectEnabled() && !suppressed,
+    }).catch((err) => {
+      this.output.warn(`ws/closed handler failed: ${String(err)}`);
+    });
+  }
+
+  private onWsMessage(ws: WebSocket, data: string): void {
+    if (ws !== this.ws) return;
+
+    let json: unknown;
+    try {
+      json = JSON.parse(data);
+    } catch {
+      this.output.warn("Invalid JSON from server.");
+      return;
+    }
+
+    const parsed = ServerEventSchema.safeParse(json);
+    if (!parsed.success) {
+      this.output.warn("Invalid server event schema.");
+      return;
+    }
+
+    for (const listener of this.messageListeners) listener(parsed.data);
+  }
+
+  private onReconnectTimer(): void {
+    this.reconnectTimer = undefined;
+
+    let backendUrl: string;
+    try {
+      backendUrl = getBackendUrl();
+    } catch (err) {
+      this.output.warn(`Reconnect skipped: ${String(err)}`);
+      return;
+    }
+
+    this.run({ type: "timer/reconnect.fired", backendUrl })
+      .then(async () => {
+        const state = this.getState();
+        if (state.authStatus !== "signedIn" || state.status === "connected") return;
+        if (!autoConnectEnabled()) return;
+        await this.run({ type: "ws/closed", autoReconnectEnabled: true });
+      })
+      .catch((err) => {
+        this.output.warn(`Reconnect failed: ${String(err)}`);
+      });
   }
 }

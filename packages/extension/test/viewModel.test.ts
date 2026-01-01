@@ -17,14 +17,23 @@ describe("deriveChatViewModel", () => {
   });
 
   it("hides actions while connecting", () => {
-    const vm = deriveChatViewModel({ authStatus: "signedIn", status: "connecting" });
+    const vm = deriveChatViewModel({
+      authStatus: "signedIn",
+      status: "connecting",
+      backendUrl: "http://127.0.0.1:8787",
+    });
 
     expect(vm.actions.signIn.visible).toBe(false);
     expect(vm.actions.connect.visible).toBe(false);
   });
 
   it("hides actions when connected", () => {
-    const vm = deriveChatViewModel({ authStatus: "signedIn", status: "connected" });
+    const vm = deriveChatViewModel({
+      authStatus: "signedIn",
+      status: "connected",
+      backendUrl: "http://127.0.0.1:8787",
+      user: { githubUserId: "123", login: "octocat", avatarUrl: "https://example.com/a.png" },
+    });
 
     expect(vm.actions.signIn.visible).toBe(false);
     expect(vm.actions.connect.visible).toBe(false);
