@@ -1,13 +1,9 @@
 import * as vscode from "vscode";
 import { ChatClient } from "../net/chatClient.js";
-import { ServerEvent } from "@vscode-chat/protocol";
+import type { ServerEvent } from "@vscode-chat/protocol";
 import { ChatViewModel, deriveChatViewModel } from "./viewModel.js";
-
-type UiInbound =
-  | { type: "ui/ready" }
-  | { type: "ui/signIn" }
-  | { type: "ui/reconnect" }
-  | { type: "ui/send"; text: string };
+import { UiInboundSchema } from "./webviewProtocol.js";
+import { GitHubLoginSchema, GitHubProfileService } from "../net/githubProfile.js";
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   static readonly viewType = "vscodeChat.chatView";
@@ -15,12 +11,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
   private uiReady = false;
   private readonly disposables: vscode.Disposable[] = [];
+  private readonly githubProfiles: GitHubProfileService;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly client: ChatClient,
     private readonly output: vscode.LogOutputChannel,
-  ) {}
+  ) {
+    this.githubProfiles = new GitHubProfileService({
+      getAccessToken: async () => {
+        try {
+          const session = await vscode.authentication.getSession("github", ["read:user"], {
+            silent: true,
+          });
+          return session?.accessToken;
+        } catch {
+          return undefined;
+        }
+      },
+      userAgent: "vscode-chat-extension",
+    });
+  }
 
   dispose(): void {
     for (const d of this.disposables) d.dispose();
@@ -45,7 +56,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.postState(vm);
       }),
       this.client.onEvent((event) => this.onServerEvent(event)),
-      view.webview.onDidReceiveMessage((msg: UiInbound) => this.onUiMessage(msg)),
+      view.webview.onDidReceiveMessage((msg: unknown) => this.onUiMessage(msg)),
     );
   }
 
@@ -60,8 +71,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       .catch((err) => this.postError(`reconnect failed: ${String(err)}`));
   }
 
-  private async onUiMessage(msg: UiInbound): Promise<void> {
-    switch (msg.type) {
+  private async onUiMessage(msg: unknown): Promise<void> {
+    const parsed = UiInboundSchema.safeParse(msg);
+    if (!parsed.success) {
+      this.output.warn("Invalid UI message schema.");
+      return;
+    }
+
+    switch (parsed.data.type) {
       case "ui/ready":
         this.uiReady = true;
         await this.client.refreshAuthState().catch((err) => this.postError(String(err)));
@@ -79,23 +96,47 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await this.client.connectIfSignedIn().catch((err) => this.postError(String(err)));
         return;
       case "ui/send":
-        this.client.sendMessage(msg.text);
+        this.client.sendMessage(parsed.data.text);
+        return;
+      case "ui/profile.open":
+        await this.onProfileOpen(parsed.data.login);
+        return;
+      case "ui/profile.openOnGitHub":
+        await this.onProfileOpenOnGitHub(parsed.data.login);
         return;
     }
   }
 
-  private onServerEvent(event: unknown): void {
+  private async onProfileOpen(login: string): Promise<void> {
     if (!this.view) return;
-    const e = event as ServerEvent;
-    switch (e.type) {
+
+    try {
+      const profile = await this.githubProfiles.getProfile(login);
+      this.view.webview.postMessage({ type: "ext/profile.result", login, profile });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "github_profile_unknown_error";
+      this.view.webview.postMessage({ type: "ext/profile.error", login, message });
+    }
+  }
+
+  private async onProfileOpenOnGitHub(login: string): Promise<void> {
+    const parsed = GitHubLoginSchema.safeParse(login);
+    if (!parsed.success) return;
+
+    await vscode.env.openExternal(vscode.Uri.parse(`https://github.com/${parsed.data}`));
+  }
+
+  private onServerEvent(event: ServerEvent): void {
+    if (!this.view) return;
+    switch (event.type) {
       case "server/welcome":
-        this.view.webview.postMessage({ type: "ext/history", history: e.history });
+        this.view.webview.postMessage({ type: "ext/history", history: event.history });
         return;
       case "server/message.new":
-        this.view.webview.postMessage({ type: "ext/message", message: e.message });
+        this.view.webview.postMessage({ type: "ext/message", message: event.message });
         return;
       case "server/error":
-        this.postError(e.message ?? e.code);
+        this.postError(event.message ?? event.code);
         return;
     }
   }
@@ -139,7 +180,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       content="default-src 'none'; img-src https: data:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="stylesheet" href="${cssUri}" />
+    <link rel="stylesheet" href="${cssUri.toString()}" />
     <title>VS Code Chat</title>
   </head>
   <body>
@@ -161,7 +202,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       </div>
       <div class="error" id="error"></div>
     </div>
-    <script nonce="${nonce}" src="${jsUri}"></script>
+    <div class="profileOverlay" id="profileOverlay" style="display: none">
+      <div class="profileCard" id="profileCard" role="dialog" aria-modal="true" aria-label="GitHub Profile">
+        <div class="profileHeader">
+          <img class="profileAvatar" id="profileAvatar" alt="" />
+          <div class="profileTitle">
+            <div class="profileName" id="profileName"></div>
+            <div class="profileLogin" id="profileLogin"></div>
+          </div>
+          <button class="profileClose" id="profileClose" aria-label="Close">×</button>
+        </div>
+        <div class="profileBody" id="profileBody"></div>
+        <div class="profileFooter">
+          <button class="secondary" id="profileOpenOnGitHub">Open on GitHub</button>
+        </div>
+        <div class="profileError" id="profileError" style="display: none"></div>
+      </div>
+    </div>
+    <script nonce="${nonce}" src="${jsUri.toString()}"></script>
   </body>
 </html>`;
   }

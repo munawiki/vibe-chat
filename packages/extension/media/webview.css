@@ -108,6 +108,15 @@ button:disabled {
   word-break: break-word;
 }
 
+.avatar.clickable,
+.msg .login.clickable {
+  cursor: pointer;
+}
+
+.msg .login.clickable:hover {
+  text-decoration: underline;
+}
+
 .composer {
   padding: 10px 12px;
   border-top: 1px solid var(--vscode-editorWidget-border);
@@ -134,4 +143,89 @@ input[type="text"] {
 
 .error.visible {
   display: block;
+}
+
+.profileOverlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.profileCard {
+  width: min(420px, 100%);
+  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--vscode-editorWidget-background);
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.profileHeader {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.profileAvatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--vscode-editorWidget-border);
+}
+
+.profileTitle {
+  flex: 1;
+  min-width: 0;
+}
+
+.profileName {
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profileLogin {
+  opacity: 0.75;
+  font-size: 12px;
+}
+
+.profileClose {
+  border: 1px solid var(--vscode-editorWidget-border);
+  background: transparent;
+  color: var(--vscode-foreground);
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  line-height: 30px;
+  text-align: center;
+  padding: 0;
+}
+
+.profileBody {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.profileBody .muted {
+  opacity: 0.85;
+  font-size: 12px;
+}
+
+.profileFooter {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.profileError {
+  margin-top: 10px;
+  color: var(--vscode-errorForeground);
+  font-size: 12px;
 }

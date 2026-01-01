@@ -11,7 +11,20 @@
     input: document.getElementById("input"),
     send: document.getElementById("btnSend"),
     error: document.getElementById("error"),
+    profileOverlay: document.getElementById("profileOverlay"),
+    profileCard: document.getElementById("profileCard"),
+    profileAvatar: document.getElementById("profileAvatar"),
+    profileName: document.getElementById("profileName"),
+    profileLogin: document.getElementById("profileLogin"),
+    profileBody: document.getElementById("profileBody"),
+    profileClose: document.getElementById("profileClose"),
+    profileOpenOnGitHub: document.getElementById("profileOpenOnGitHub"),
+    profileError: document.getElementById("profileError"),
   };
+
+  let activeProfileLogin = "";
+  let activeProfileKey = "";
+  let profileVisible = false;
 
   /** @param {string} text */
   function setError(text) {
@@ -25,6 +38,131 @@
     els.error.textContent = text;
   }
 
+  /** @param {string} text */
+  function setProfileError(text) {
+    if (!els.profileError) return;
+    if (!text) {
+      els.profileError.style.display = "none";
+      els.profileError.textContent = "";
+      return;
+    }
+    els.profileError.style.display = "";
+    els.profileError.textContent = text;
+  }
+
+  function showProfile() {
+    if (!els.profileOverlay) return;
+    els.profileOverlay.style.display = "";
+    profileVisible = true;
+    if (els.profileClose) els.profileClose.focus();
+  }
+
+  function hideProfile() {
+    if (!els.profileOverlay) return;
+    els.profileOverlay.style.display = "none";
+    profileVisible = false;
+    activeProfileLogin = "";
+    activeProfileKey = "";
+    setProfileError("");
+    if (els.profileBody) els.profileBody.textContent = "";
+  }
+
+  /**
+   * @param {string} login
+   * @param {string | undefined} avatarUrl
+   */
+  function renderProfileLoading(login, avatarUrl) {
+    setProfileError("");
+    if (els.profileAvatar) {
+      els.profileAvatar.alt = `@${login}`;
+      if (avatarUrl) els.profileAvatar.src = avatarUrl;
+      els.profileAvatar.referrerPolicy = "no-referrer";
+    }
+    if (els.profileName) els.profileName.textContent = `@${login}`;
+    if (els.profileLogin) els.profileLogin.textContent = "";
+    if (els.profileBody) els.profileBody.textContent = "Loading…";
+  }
+
+  /** @param {any} profile */
+  function renderProfile(profile) {
+    setProfileError("");
+    const login = typeof profile?.login === "string" ? profile.login : activeProfileLogin;
+    const name = typeof profile?.name === "string" ? profile.name : null;
+    const avatarUrl = typeof profile?.avatarUrl === "string" ? profile.avatarUrl : "";
+
+    if (els.profileAvatar) {
+      els.profileAvatar.alt = `@${login}`;
+      if (avatarUrl) els.profileAvatar.src = avatarUrl;
+      els.profileAvatar.referrerPolicy = "no-referrer";
+    }
+
+    if (els.profileName) els.profileName.textContent = name ? name : `@${login}`;
+    if (els.profileLogin) els.profileLogin.textContent = name ? `@${login}` : "";
+
+    if (!els.profileBody) return;
+    els.profileBody.innerHTML = "";
+
+    const bio = typeof profile?.bio === "string" ? profile.bio : null;
+    if (bio) {
+      const bioEl = document.createElement("div");
+      bioEl.textContent = bio;
+      els.profileBody.appendChild(bioEl);
+    }
+
+    const metaParts = [];
+    if (typeof profile?.company === "string" && profile.company) metaParts.push(profile.company);
+    if (typeof profile?.location === "string" && profile.location) metaParts.push(profile.location);
+    if (metaParts.length > 0) {
+      const metaEl = document.createElement("div");
+      metaEl.className = "muted";
+      metaEl.textContent = metaParts.join(" · ");
+      els.profileBody.appendChild(metaEl);
+    }
+
+    const statsParts = [];
+    if (typeof profile?.followers === "number") statsParts.push(`${profile.followers} followers`);
+    if (typeof profile?.following === "number") statsParts.push(`${profile.following} following`);
+    if (typeof profile?.publicRepos === "number") statsParts.push(`${profile.publicRepos} repos`);
+    if (statsParts.length > 0) {
+      const statsEl = document.createElement("div");
+      statsEl.className = "muted";
+      statsEl.textContent = statsParts.join(" · ");
+      els.profileBody.appendChild(statsEl);
+    }
+  }
+
+  /**
+   * @param {string} login
+   * @param {string | undefined} avatarUrl
+   */
+  function openProfile(login, avatarUrl) {
+    if (!login) return;
+    activeProfileLogin = login;
+    activeProfileKey = login.toLowerCase();
+    renderProfileLoading(login, avatarUrl);
+    showProfile();
+    vscode.postMessage({ type: "ui/profile.open", login });
+  }
+
+  /**
+   * @param {HTMLElement} el
+   * @param {string} login
+   * @param {string | undefined} avatarUrl
+   */
+  function bindProfileOpen(el, login, avatarUrl) {
+    el.classList.add("clickable");
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
+    el.setAttribute("aria-label", `Open GitHub profile for @${login}`);
+    el.addEventListener("click", () => openProfile(login, avatarUrl));
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openProfile(login, avatarUrl);
+      }
+    });
+  }
+
   /** @param {{login:string, avatarUrl:string}} user @param {string} text @param {string} createdAt */
   function addMessage(user, text, createdAt) {
     if (!els.messages) return;
@@ -36,6 +174,7 @@
     avatar.alt = user.login;
     avatar.src = user.avatarUrl;
     avatar.referrerPolicy = "no-referrer";
+    bindProfileOpen(avatar, user.login, user.avatarUrl);
 
     const body = document.createElement("div");
 
@@ -45,6 +184,7 @@
     const login = document.createElement("span");
     login.className = "login";
     login.textContent = user.login;
+    bindProfileOpen(login, user.login, user.avatarUrl);
 
     const time = document.createElement("span");
     time.className = "time";
@@ -119,6 +259,26 @@
       }
     });
   }
+  if (els.profileClose) {
+    els.profileClose.addEventListener("click", hideProfile);
+  }
+  if (els.profileOverlay && els.profileCard) {
+    els.profileOverlay.addEventListener("click", (e) => {
+      if (e.target === els.profileOverlay) hideProfile();
+    });
+  }
+  if (els.profileOpenOnGitHub) {
+    els.profileOpenOnGitHub.addEventListener("click", () => {
+      if (!activeProfileLogin) return;
+      vscode.postMessage({ type: "ui/profile.openOnGitHub", login: activeProfileLogin });
+    });
+  }
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && profileVisible) {
+      e.preventDefault();
+      hideProfile();
+    }
+  });
 
   window.addEventListener("message", (event) => {
     const msg = event.data;
@@ -142,6 +302,26 @@
       case "ext/error":
         setError(String(msg.message ?? "error"));
         return;
+      case "ext/profile.result": {
+        const login = typeof msg.login === "string" ? msg.login : "";
+        if (!login || login.toLowerCase() !== activeProfileKey) return;
+        renderProfile(msg.profile);
+        return;
+      }
+      case "ext/profile.error": {
+        const login = typeof msg.login === "string" ? msg.login : "";
+        if (!login || login.toLowerCase() !== activeProfileKey) return;
+        const code = String(msg.message ?? "error");
+        setProfileError("Unable to load profile.");
+        if (els.profileBody) {
+          els.profileBody.innerHTML = "";
+          const detail = document.createElement("div");
+          detail.className = "muted";
+          detail.textContent = code;
+          els.profileBody.appendChild(detail);
+        }
+        return;
+      }
     }
   });
 
