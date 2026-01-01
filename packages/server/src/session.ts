@@ -9,6 +9,12 @@ const GithubUserSchema = z.object({
 
 type GithubUser = z.infer<typeof GithubUserSchema>;
 
+const SessionTokenPayloadSchema = z.object({
+  sub: z.string().min(1),
+  login: z.string().min(1),
+  avatarUrl: z.string().url(),
+});
+
 const SESSION_TTL_SECONDS = 60 * 60; // 1h
 
 export async function exchangeGithubTokenForSession(
@@ -39,18 +45,12 @@ export async function verifySessionToken(
   const secretKey = secret(env.SESSION_SECRET);
   const { payload } = await jwtVerify(token, secretKey, { algorithms: ["HS256"] });
 
-  const githubUserId = payload.sub;
-  const login = payload.login;
-  const avatarUrl = payload.avatarUrl;
-
-  if (
-    typeof githubUserId !== "string" ||
-    typeof login !== "string" ||
-    typeof avatarUrl !== "string"
-  ) {
+  const parsed = SessionTokenPayloadSchema.safeParse(payload);
+  if (!parsed.success) {
     throw new Error("invalid_token_payload");
   }
 
+  const { sub: githubUserId, login, avatarUrl } = parsed.data;
   return { githubUserId, login, avatarUrl };
 }
 
@@ -89,7 +89,7 @@ async function fetchGithubUser(accessToken: string): Promise<GithubUser> {
     throw new Error(`github_auth_failed_${response.status}`);
   }
 
-  const json = (await response.json()) as unknown;
+  const json: unknown = await response.json();
   const parsed = GithubUserSchema.safeParse(json);
   if (!parsed.success) {
     throw new Error("github_user_schema_mismatch");

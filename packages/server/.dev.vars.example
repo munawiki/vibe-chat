@@ -1,3 +1,6 @@
 # Local dev only
 # - Use a long random string (>= 32 characters).
 SESSION_SECRET=replace-with-a-long-random-string-at-least-32-chars
+
+# Optional: comma-separated GitHub user ids to deny at the WebSocket boundary.
+# DENY_GITHUB_USER_IDS=123,456

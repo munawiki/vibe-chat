@@ -1,10 +1,14 @@
 import { z } from "zod";
 import { ChatRoom } from "./room.js";
 import { exchangeGithubTokenForSession } from "./session.js";
+import { TelemetryEventSchema } from "@vscode-chat/protocol";
+import { checkFixedWindowRateLimit, getClientIp } from "./util.js";
+import type { RateWindow } from "./util.js";
 
 export interface Env {
   CHAT_ROOM: DurableObjectNamespace;
   SESSION_SECRET: string;
+  DENY_GITHUB_USER_IDS?: string;
 }
 
 const ExchangeRequestSchema = z.object({
@@ -12,6 +16,14 @@ const ExchangeRequestSchema = z.object({
 });
 
 export { ChatRoom };
+
+const AUTH_EXCHANGE_RATE_WINDOW_MS = 60_000;
+const AUTH_EXCHANGE_RATE_MAX_COUNT = 10;
+const authExchangeRateByIp = new Map<string, RateWindow>();
+
+const NO_STORE_HEADERS = {
+  "cache-control": "no-store",
+} as const;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -23,6 +35,52 @@ export default {
 
     if (url.pathname === "/auth/exchange") {
       if (request.method !== "POST") {
+        return json({ error: "method_not_allowed" }, 405, NO_STORE_HEADERS);
+      }
+
+      const clientIp = getClientIp(request);
+      if (clientIp) {
+        const rateCheck = checkFixedWindowRateLimit(clientIp, authExchangeRateByIp, {
+          windowMs: AUTH_EXCHANGE_RATE_WINDOW_MS,
+          maxCount: AUTH_EXCHANGE_RATE_MAX_COUNT,
+        });
+        if (!rateCheck.allowed) {
+          log({
+            type: "auth_exchange_rate_limited",
+            retryAfterMs: rateCheck.retryAfterMs,
+          });
+          return json({ error: "rate_limited", retryAfterMs: rateCheck.retryAfterMs }, 429, {
+            ...NO_STORE_HEADERS,
+            "retry-after": String(Math.ceil(rateCheck.retryAfterMs / 1000)),
+          });
+        }
+      }
+
+      let body: unknown;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ error: "invalid_json" }, 400, NO_STORE_HEADERS);
+      }
+
+      const parsed = ExchangeRequestSchema.safeParse(body);
+      if (!parsed.success) {
+        return json({ error: "invalid_payload" }, 400, NO_STORE_HEADERS);
+      }
+
+      try {
+        const session = await exchangeGithubTokenForSession(parsed.data.accessToken, env);
+        log({ type: "auth_exchange_success" });
+        return json(session, 200, NO_STORE_HEADERS);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "auth_failed";
+        log({ type: "auth_exchange_failed", message });
+        return json({ error: "auth_failed", message }, 401, NO_STORE_HEADERS);
+      }
+    }
+
+    if (url.pathname === "/telemetry") {
+      if (request.method !== "POST") {
         return json({ error: "method_not_allowed" }, 405);
       }
 
@@ -33,18 +91,13 @@ export default {
         return json({ error: "invalid_json" }, 400);
       }
 
-      const parsed = ExchangeRequestSchema.safeParse(body);
+      const parsed = TelemetryEventSchema.safeParse(body);
       if (!parsed.success) {
         return json({ error: "invalid_payload" }, 400);
       }
 
-      try {
-        const session = await exchangeGithubTokenForSession(parsed.data.accessToken, env);
-        return json(session, 200);
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : "auth_failed";
-        return json({ error: "auth_failed", message }, 401);
-      }
+      log({ type: "telemetry", event: parsed.data });
+      return new Response(null, { status: 204 });
     }
 
     if (url.pathname === "/ws") {
@@ -61,11 +114,22 @@ export default {
   },
 };
 
-function json(data: unknown, status = 200): Response {
+function json(data: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
+      ...headers,
     },
   });
+}
+
+function log(event: Record<string, unknown>): void {
+  // NOTE: Keep logs structured and privacy-preserving. Never include tokens or message text.
+  console.log(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      ...event,
+    }),
+  );
 }

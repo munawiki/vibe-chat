@@ -1,11 +1,19 @@
 import {
   ChatMessage,
+  ChatMessageSchema,
   ClientEventSchema,
   PROTOCOL_VERSION,
   ServerEvent,
   ServerEventSchema,
 } from "@vscode-chat/protocol";
 import { verifySessionToken } from "./session.js";
+import { getClientIp, parseBearerToken, parseGithubUserIdDenylist } from "./util.js";
+import type { RateWindow } from "./util.js";
+import {
+  appendHistory as appendHistoryPolicy,
+  createChatMessage,
+  nextFixedWindowRateLimit,
+} from "./policy/chatRoomPolicy.js";
 
 type SocketAttachment = {
   user: {
@@ -15,26 +23,27 @@ type SocketAttachment = {
   };
 };
 
-type RateWindow = {
-  windowStartMs: number;
-  count: number;
-};
-
 const HISTORY_KEY = "history";
 const HISTORY_LIMIT = 200;
 const RATE_WINDOW_MS = 10_000;
 const RATE_MAX_COUNT = 5;
+const CONNECT_RATE_WINDOW_MS = 10_000;
+const CONNECT_RATE_MAX_COUNT = 20;
+const MAX_CONNECTIONS_PER_USER = 3;
 
 export class ChatRoom implements DurableObject {
   private readonly historyReady: Promise<void>;
   private history: ChatMessage[] = [];
   private readonly rateByUser = new Map<string, RateWindow>();
+  private readonly connectRateByIp = new Map<string, RateWindow>();
+  private readonly deniedGithubUserIds: Set<string>;
 
   constructor(
     private readonly state: DurableObjectState,
-    private readonly env: { SESSION_SECRET: string },
+    private readonly env: { SESSION_SECRET: string; DENY_GITHUB_USER_IDS?: string },
   ) {
     this.historyReady = this.loadHistory();
+    this.deniedGithubUserIds = parseGithubUserIdDenylist(this.env.DENY_GITHUB_USER_IDS);
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -42,8 +51,19 @@ export class ChatRoom implements DurableObject {
       return new Response("Expected websocket", { status: 426 });
     }
 
-    const url = new URL(request.url);
-    const token = url.searchParams.get("token");
+    const clientIp = getClientIp(request);
+    if (clientIp) {
+      const rateCheck = this.checkConnectRateLimit(clientIp);
+      if (!rateCheck.allowed) {
+        this.log({ type: "ws_connect_rate_limited", retryAfterMs: rateCheck.retryAfterMs });
+        return new Response("Too many connection attempts", {
+          status: 429,
+          headers: { "retry-after": String(Math.ceil(rateCheck.retryAfterMs / 1000)) },
+        });
+      }
+    }
+
+    const token = parseBearerToken(request.headers.get("Authorization"));
     if (!token) {
       return new Response("Missing token", { status: 401 });
     }
@@ -53,6 +73,20 @@ export class ChatRoom implements DurableObject {
       user = await verifySessionToken(token, this.env);
     } catch {
       return new Response("Invalid token", { status: 401 });
+    }
+
+    if (this.deniedGithubUserIds.has(user.githubUserId)) {
+      this.log({ type: "ws_connect_denied" });
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    const activeConnections = countConnectionsForUser(
+      this.state.getWebSockets(),
+      user.githubUserId,
+    );
+    if (activeConnections >= MAX_CONNECTIONS_PER_USER) {
+      this.log({ type: "ws_connect_too_many_connections" });
+      return new Response("Too many connections", { status: 429 });
     }
 
     const pair = new WebSocketPair();
@@ -107,6 +141,7 @@ export class ChatRoom implements DurableObject {
       case "client/message.send": {
         const rateCheck = this.checkRateLimit(user.githubUserId);
         if (!rateCheck.allowed) {
+          this.log({ type: "chat_rate_limited", retryAfterMs: rateCheck.retryAfterMs });
           this.sendError(ws, {
             code: "rate_limited",
             message: "Too many messages",
@@ -115,12 +150,12 @@ export class ChatRoom implements DurableObject {
           return;
         }
 
-        const newMessage: ChatMessage = {
+        const newMessage = createChatMessage({
           id: crypto.randomUUID(),
           user,
           text: parsed.data.text,
           createdAt: new Date().toISOString(),
-        };
+        });
 
         await this.appendHistory(newMessage);
         this.broadcast({
@@ -142,14 +177,20 @@ export class ChatRoom implements DurableObject {
   }
 
   private async loadHistory(): Promise<void> {
-    const saved = await this.state.storage.get<ChatMessage[]>(HISTORY_KEY);
-    if (Array.isArray(saved)) {
-      this.history = saved;
+    const saved = await this.state.storage.get<unknown>(HISTORY_KEY);
+    if (!Array.isArray(saved)) return;
+
+    const valid: ChatMessage[] = [];
+    for (const item of saved) {
+      const parsed = ChatMessageSchema.safeParse(item);
+      if (parsed.success) valid.push(parsed.data);
     }
+
+    this.history = valid.slice(-HISTORY_LIMIT);
   }
 
   private async appendHistory(message: ChatMessage): Promise<void> {
-    this.history = [...this.history, message].slice(-HISTORY_LIMIT);
+    this.history = appendHistoryPolicy(this.history, message, HISTORY_LIMIT);
     await this.state.storage.put(HISTORY_KEY, this.history);
   }
 
@@ -189,21 +230,53 @@ export class ChatRoom implements DurableObject {
   private checkRateLimit(
     githubUserId: string,
   ): { allowed: true } | { allowed: false; retryAfterMs: number } {
-    const now = Date.now();
-    const window = this.rateByUser.get(githubUserId);
+    const nowMs = Date.now();
+    const decision = nextFixedWindowRateLimit(this.rateByUser.get(githubUserId), nowMs, {
+      windowMs: RATE_WINDOW_MS,
+      maxCount: RATE_MAX_COUNT,
+    });
 
-    if (!window || now - window.windowStartMs >= RATE_WINDOW_MS) {
-      this.rateByUser.set(githubUserId, { windowStartMs: now, count: 1 });
-      return { allowed: true };
-    }
-
-    if (window.count >= RATE_MAX_COUNT) {
-      const retryAfterMs = Math.max(0, RATE_WINDOW_MS - (now - window.windowStartMs));
-      return { allowed: false, retryAfterMs };
-    }
-
-    window.count += 1;
-    this.rateByUser.set(githubUserId, window);
-    return { allowed: true };
+    this.rateByUser.set(githubUserId, decision.nextWindow);
+    return decision.allowed
+      ? { allowed: true }
+      : { allowed: false, retryAfterMs: decision.retryAfterMs };
   }
+
+  private checkConnectRateLimit(
+    key: string,
+  ): { allowed: true } | { allowed: false; retryAfterMs: number } {
+    const nowMs = Date.now();
+    const decision = nextFixedWindowRateLimit(this.connectRateByIp.get(key), nowMs, {
+      windowMs: CONNECT_RATE_WINDOW_MS,
+      maxCount: CONNECT_RATE_MAX_COUNT,
+    });
+
+    this.connectRateByIp.set(key, decision.nextWindow);
+    return decision.allowed
+      ? { allowed: true }
+      : { allowed: false, retryAfterMs: decision.retryAfterMs };
+  }
+
+  private log(event: Record<string, unknown>): void {
+    // NOTE: Keep logs structured and privacy-preserving. Never include tokens or message text.
+    console.log(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        ...event,
+      }),
+    );
+  }
+}
+
+function countConnectionsForUser(webSockets: WebSocket[], githubUserId: string): number {
+  let count = 0;
+  for (const ws of webSockets) {
+    try {
+      const attachment = ws.deserializeAttachment() as SocketAttachment | undefined;
+      if (attachment?.user.githubUserId === githubUserId) count += 1;
+    } catch {
+      // ignore
+    }
+  }
+  return count;
 }
