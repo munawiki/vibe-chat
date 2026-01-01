@@ -3,9 +3,17 @@
   "displayName": "VS Code Chat",
   "description": "A single shared chat room for VS Code using GitHub sign-in.",
   "version": "0.0.1",
-  "private": true,
+  "private": false,
   "license": "Apache-2.0",
   "publisher": "munawiki",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/munawiki/vscode-chat.git"
+  },
+  "homepage": "https://github.com/munawiki/vscode-chat",
+  "bugs": {
+    "url": "https://github.com/munawiki/vscode-chat/issues"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },

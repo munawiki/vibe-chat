@@ -1,0 +1,14 @@
+# Source / tooling
+src/**
+test/**
+node_modules/**
+esbuild.mjs
+tsconfig.json
+
+# Dev artifacts
+*.log
+*.vsix
+
+# Optional debug artifacts (keep the VSIX minimal)
+dist/**/*.map
+
