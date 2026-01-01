@@ -5,6 +5,7 @@
       "name": "Run Extension (VS Code Chat)",
       "type": "extensionHost",
       "request": "launch",
+      "preLaunchTask": "Dev: All",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}/packages/extension"],
       "outFiles": ["${workspaceFolder}/packages/extension/dist/**/*.cjs"]
     }

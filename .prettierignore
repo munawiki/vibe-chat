@@ -6,4 +6,5 @@ out/
 .env
 .env.*
 package-lock.json
+pnpm-lock.yaml
 *.log

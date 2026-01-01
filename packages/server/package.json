@@ -12,7 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@vscode-chat/protocol": "0.0.1",
+    "@vscode-chat/protocol": "workspace:*",
     "jose": "^5.10.0",
     "zod": "^3.24.1"
   },

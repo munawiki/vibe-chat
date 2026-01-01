@@ -9,10 +9,9 @@ A VS Code extension that lets you join a single shared chat room using GitHub si
 
 ## Development
 
-- `npm ci`
-- `npm run dev:server` (backend: `http://127.0.0.1:8787`)
-- `npm run dev:extension` (extension bundler in watch mode)
-- In VS Code, run the `Run Extension (VS Code Chat)` launch config.
+- `pnpm install`
+- `pnpm dev` (starts backend + extension watch; bootstraps `packages/server/.dev.vars` if needed)
+- In VS Code, run the `Run Extension (VS Code Chat)` launch config (F5). It will run the `Dev: All` task automatically.
 
 ## Configuration
 
@@ -21,8 +20,9 @@ A VS Code extension that lets you join a single shared chat room using GitHub si
 
 ## Quality gate
 
-- `npm run check`
+- `pnpm check`
 
 ## License
 
 Apache-2.0
+

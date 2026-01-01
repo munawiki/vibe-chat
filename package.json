@@ -2,21 +2,21 @@
   "name": "vscode-chat-workspace",
   "private": true,
   "license": "Apache-2.0",
-  "workspaces": [
-    "packages/*"
-  ],
+  "packageManager": "pnpm@10.11.0",
   "scripts": {
-    "postinstall": "npm --workspace @vscode-chat/protocol run build",
-    "build": "npm --workspaces run build",
-    "test": "npm --workspaces run test",
-    "lint": "npm --workspaces run lint",
+    "postinstall": "pnpm --filter @vscode-chat/protocol build",
+    "build": "pnpm -r run build",
+    "test": "pnpm -r test && pnpm test:root",
+    "test:root": "node --test scripts/dev.test.mjs",
+    "lint": "pnpm -r run lint",
     "lint:eslint": "eslint .",
     "lint:eslint:fix": "eslint . --fix",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
-    "check": "npm run format:check && npm run lint:eslint && npm run lint && npm test",
-    "dev:server": "npm --workspace @vscode-chat/server run dev",
-    "dev:extension": "npm --workspace vscode-chat run watch"
+    "check": "pnpm format:check && pnpm lint:eslint && pnpm lint && pnpm test",
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "pnpm --filter @vscode-chat/server dev",
+    "dev:extension": "pnpm --filter vscode-chat watch"
   },
   "devDependencies": {
     "@eslint/js": "^9.20.0",
