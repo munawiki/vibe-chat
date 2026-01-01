@@ -17,6 +17,13 @@ export const ChatMessageSchema = z.object({
 });
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 
+export const SessionExchangeResponseSchema = z.object({
+  token: z.string().min(1),
+  expiresAt: z.string().datetime(),
+  user: AuthUserSchema,
+});
+export type SessionExchangeResponse = z.infer<typeof SessionExchangeResponseSchema>;
+
 const BaseEventSchema = z.object({
   version: z.literal(PROTOCOL_VERSION),
   type: z.string().min(1),
