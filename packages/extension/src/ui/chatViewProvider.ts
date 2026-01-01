@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
-import { ChatClient, ChatClientState } from "../net/chatClient.js";
+import { ChatClient } from "../net/chatClient.js";
 import { ServerEvent } from "@vscode-chat/protocol";
+import { ChatViewModel, deriveChatViewModel } from "./viewModel.js";
 
 type UiInbound =
   | { type: "ui/ready" }
@@ -40,11 +41,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.disposables.push(
       this.client.onState((state) => {
         if (!this.uiReady) return;
-        const backendUrl = this.backendUrl();
-        this.postState({
-          ...state,
-          ...(backendUrl ? { backendUrl } : {}),
-        });
+        const vm = deriveChatViewModel(state, this.backendUrl());
+        this.postState(vm);
       }),
       this.client.onEvent((event) => this.onServerEvent(event)),
       view.webview.onDidReceiveMessage((msg: UiInbound) => this.onUiMessage(msg)),
@@ -57,25 +55,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (!this.uiReady) return;
     this.postStateSnapshot();
     if (!vscode.workspace.getConfiguration("vscodeChat").get<boolean>("autoConnect", true)) return;
-    this.client.connect().catch((err) => this.postError(`reconnect failed: ${String(err)}`));
+    this.client
+      .connectIfSignedIn()
+      .catch((err) => this.postError(`reconnect failed: ${String(err)}`));
   }
 
   private async onUiMessage(msg: UiInbound): Promise<void> {
     switch (msg.type) {
       case "ui/ready":
         this.uiReady = true;
+        await this.client.refreshAuthState().catch((err) => this.postError(String(err)));
         this.postStateSnapshot();
         if (vscode.workspace.getConfiguration("vscodeChat").get<boolean>("autoConnect", true)) {
           await this.client
-            .connect()
+            .connectIfSignedIn()
             .catch((err) => this.postError(`connect failed: ${String(err)}`));
         }
         return;
       case "ui/signIn":
-        await this.client.signIn().catch((err) => this.postError(String(err)));
+        await this.client.signInAndConnect().catch((err) => this.postError(String(err)));
         return;
       case "ui/reconnect":
-        await this.client.connect().catch((err) => this.postError(String(err)));
+        await this.client.connectIfSignedIn().catch((err) => this.postError(String(err)));
         return;
       case "ui/send":
         this.client.sendMessage(msg.text);
@@ -101,15 +102,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private postStateSnapshot(): void {
     const current = this.client.getState();
-    const backendUrl = this.backendUrl();
-    if (backendUrl) {
-      this.postState({ ...current, backendUrl });
-      return;
-    }
-    this.postState(current);
+    const vm = deriveChatViewModel(current, this.backendUrl());
+    this.postState(vm);
   }
 
-  private postState(state: ChatClientState): void {
+  private postState(state: ChatViewModel): void {
     if (!this.view) return;
     this.view.webview.postMessage({ type: "ext/state", state });
   }
@@ -153,8 +150,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           <div class="line2" id="status2"></div>
         </div>
         <div class="actions">
-          <button class="secondary" id="btnSignIn">Sign in</button>
-          <button class="secondary" id="btnReconnect">Reconnect</button>
+          <button class="secondary" id="btnSignIn">Sign in with GitHub</button>
+          <button class="secondary" id="btnReconnect" style="display: none">Connect</button>
         </div>
       </div>
       <div class="messages" id="messages"></div>

@@ -5,6 +5,7 @@ import { ChatViewProvider } from "./ui/chatViewProvider.js";
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("VS Code Chat", { log: true });
   const client = new ChatClient(output);
+  client.start();
   const provider = new ChatViewProvider(context, client, output);
 
   context.subscriptions.push(

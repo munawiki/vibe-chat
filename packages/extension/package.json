@@ -57,7 +57,8 @@
       "vscodeChat": [
         {
           "id": "vscodeChat.chatView",
-          "name": "Chat"
+          "name": "Chat",
+          "type": "webview"
         }
       ]
     }

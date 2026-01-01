@@ -71,7 +71,15 @@
     els.messages.scrollTop = els.messages.scrollHeight;
   }
 
-  /** @param {{status:string, user?:{login:string}, backendUrl?:string}} state */
+  /** @param {{visible:boolean, enabled:boolean, label:string}} action */
+  function renderAction(el, action) {
+    if (!el || !action) return;
+    el.style.display = action.visible ? "" : "none";
+    el.disabled = !action.enabled;
+    el.textContent = action.label;
+  }
+
+  /** @param {{status:string, authStatus?:string, actions?:{signIn?:{visible:boolean, enabled:boolean, label:string}, connect?:{visible:boolean, enabled:boolean, label:string}}, user?:{login:string}, backendUrl?:string}} state */
   function renderState(state) {
     if (els.status1) els.status1.textContent = state.status ?? "unknown";
     const parts = [];
@@ -82,7 +90,8 @@
     const canSend = state.status === "connected";
     if (els.send) els.send.disabled = !canSend;
     if (els.input) els.input.disabled = !canSend;
-    if (els.reconnect) els.reconnect.disabled = state.status === "connecting";
+    renderAction(els.signIn, state.actions?.signIn);
+    renderAction(els.reconnect, state.actions?.connect);
   }
 
   function sendCurrent() {

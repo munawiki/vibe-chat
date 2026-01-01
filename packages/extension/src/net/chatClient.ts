@@ -9,7 +9,10 @@ import {
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected";
 
+export type AuthStatus = "signedOut" | "signedIn";
+
 export type ChatClientState = {
+  authStatus: AuthStatus;
   status: ConnectionStatus;
   backendUrl?: string;
   user?: { login: string; avatarUrl: string };
@@ -24,17 +27,23 @@ type SessionExchangeResponse = {
 export class ChatClient implements vscode.Disposable {
   private ws: WebSocket | undefined;
   private sessionToken: string | undefined;
-  private state: ChatClientState = { status: "disconnected" };
+  private state: ChatClientState = { authStatus: "signedOut", status: "disconnected" };
   private listeners = new Set<(state: ChatClientState) => void>();
   private messageListeners = new Set<(event: unknown) => void>();
   private reconnectTimer: NodeJS.Timeout | undefined;
   private reconnectAttempt = 0;
+  private readonly disposables: vscode.Disposable[] = [];
+
+  private static readonly githubProviderId = "github";
+  private static readonly githubScopes = ["read:user"] as const;
 
   constructor(private readonly output: vscode.LogOutputChannel) {}
 
   dispose(): void {
     this.stopReconnect();
     this.disconnect();
+    for (const d of this.disposables) d.dispose();
+    this.disposables.length = 0;
   }
 
   onState(listener: (state: ChatClientState) => void): vscode.Disposable {
@@ -52,29 +61,86 @@ export class ChatClient implements vscode.Disposable {
     return this.state;
   }
 
+  start(): void {
+    this.disposables.push(
+      vscode.authentication.onDidChangeSessions((e) => {
+        if (e.provider.id !== ChatClient.githubProviderId) return;
+        void this.refreshAuthState();
+      }),
+    );
+
+    void this.refreshAuthState();
+  }
+
+  async refreshAuthState(): Promise<void> {
+    const session = await this.getGitHubSession({ interactive: false });
+    if (!session) {
+      this.setAuthStatus("signedOut");
+      return;
+    }
+    this.setAuthStatus("signedIn");
+  }
+
   async signIn(): Promise<void> {
-    await vscode.authentication.getSession("github", ["read:user"], { createIfNone: true });
+    await this.getGitHubSession({ interactive: true });
+    this.setAuthStatus("signedIn");
     this.output.info("GitHub session acquired.");
   }
 
   async connect(): Promise<void> {
-    this.stopReconnect();
+    await this.connectInteractive();
+  }
+
+  async connectInteractive(): Promise<void> {
     const backendUrl = this.getBackendUrl();
+    this.stopReconnect();
     this.setState({ ...this.state, backendUrl, status: "connecting" });
 
-    const githubSession = await vscode.authentication.getSession("github", ["read:user"], {
-      createIfNone: true,
-    });
-    const exchange = await this.exchangeToken(backendUrl, githubSession.accessToken);
-    this.sessionToken = exchange.token;
+    try {
+      const githubSession = await this.getGitHubSession({ interactive: true });
+      this.setAuthStatus("signedIn");
+      await this.connectWithGitHubSession(backendUrl, githubSession);
+    } catch (err) {
+      this.setState({ ...this.state, status: "disconnected" });
+      throw err;
+    }
+  }
 
-    this.setState({
-      status: "connecting",
-      backendUrl,
-      user: { login: exchange.user.login, avatarUrl: exchange.user.avatarUrl },
-    });
+  async connectIfSignedIn(): Promise<boolean> {
+    const backendUrl = this.getBackendUrl();
+    this.stopReconnect();
 
-    await this.openWebSocket(backendUrl, exchange.token);
+    const githubSession = await this.getGitHubSession({ interactive: false });
+    if (!githubSession) {
+      this.setAuthStatus("signedOut");
+      return false;
+    }
+
+    this.setAuthStatus("signedIn");
+    this.setState({ ...this.state, backendUrl, status: "connecting" });
+    try {
+      await this.connectWithGitHubSession(backendUrl, githubSession);
+      return true;
+    } catch (err) {
+      this.setState({ ...this.state, status: "disconnected" });
+      throw err;
+    }
+  }
+
+  async signInAndConnect(): Promise<void> {
+    const backendUrl = this.getBackendUrl();
+    this.stopReconnect();
+
+    const githubSession = await this.getGitHubSession({ interactive: true });
+    this.setAuthStatus("signedIn");
+    this.setState({ ...this.state, backendUrl, status: "connecting" });
+
+    try {
+      await this.connectWithGitHubSession(backendUrl, githubSession);
+    } catch (err) {
+      this.setState({ ...this.state, status: "disconnected" });
+      throw err;
+    }
   }
 
   disconnect(): void {
@@ -109,6 +175,73 @@ export class ChatClient implements vscode.Disposable {
 
   private autoConnectEnabled(): boolean {
     return vscode.workspace.getConfiguration("vscodeChat").get<boolean>("autoConnect", true);
+  }
+
+  private async getGitHubSession(options: {
+    interactive: true;
+  }): Promise<vscode.AuthenticationSession>;
+  private async getGitHubSession(options: {
+    interactive: false;
+  }): Promise<vscode.AuthenticationSession | undefined>;
+  private async getGitHubSession(options: {
+    interactive: boolean;
+  }): Promise<vscode.AuthenticationSession | undefined> {
+    if (options.interactive) {
+      return vscode.authentication.getSession(
+        ChatClient.githubProviderId,
+        ChatClient.githubScopes,
+        { createIfNone: true },
+      );
+    }
+
+    return vscode.authentication.getSession(ChatClient.githubProviderId, ChatClient.githubScopes, {
+      silent: true,
+    });
+  }
+
+  private setAuthStatus(authStatus: AuthStatus): void {
+    if (authStatus === this.state.authStatus) return;
+
+    if (authStatus === "signedOut") {
+      this.stopReconnect();
+      this.closeSocket(1000, "auth_signed_out");
+      this.sessionToken = undefined;
+      const { user: _user, ...rest } = this.state;
+      const next: ChatClientState = {
+        ...rest,
+        authStatus: "signedOut",
+        status: "disconnected",
+      };
+      this.setState(next);
+      return;
+    }
+
+    this.setState({ ...this.state, authStatus: "signedIn" });
+  }
+
+  private async connectWithGitHubSession(
+    backendUrl: string,
+    githubSession: vscode.AuthenticationSession,
+  ): Promise<void> {
+    const exchange = await this.exchangeToken(backendUrl, githubSession.accessToken).catch(
+      (err) => {
+        const msg = String(err);
+        if (msg.includes("auth_exchange_failed_401") || msg.includes("auth_exchange_failed_403")) {
+          this.setAuthStatus("signedOut");
+        }
+        throw err;
+      },
+    );
+    this.sessionToken = exchange.token;
+
+    this.setState({
+      ...this.state,
+      status: "connecting",
+      backendUrl,
+      user: { login: exchange.user.login, avatarUrl: exchange.user.avatarUrl },
+    });
+
+    await this.openWebSocket(backendUrl, exchange.token);
   }
 
   private async exchangeToken(
@@ -179,7 +312,8 @@ export class ChatClient implements vscode.Disposable {
       this.output.warn(`WebSocket closed: ${code} ${reason.toString()}`);
       this.ws = undefined;
       this.setState({ ...this.state, status: "disconnected" });
-      if (this.autoConnectEnabled()) this.scheduleReconnect();
+      if (this.autoConnectEnabled() && this.state.authStatus === "signedIn")
+        this.scheduleReconnect();
     });
 
     ws.on("error", (err) => {
@@ -197,7 +331,8 @@ export class ChatClient implements vscode.Disposable {
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = undefined;
       try {
-        await this.connect();
+        const attempted = await this.connectIfSignedIn();
+        if (!attempted) return;
       } catch (err) {
         this.output.warn(`Reconnect failed: ${String(err)}`);
         this.scheduleReconnect();
