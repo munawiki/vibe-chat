@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { ChatClient } from "./net/chatClient.js";
 import { ChatViewProvider } from "./ui/chatViewProvider.js";
+import { ChatStatusBar } from "./ui/chatStatusBar.js";
 import { createExtensionTelemetry } from "./telemetry.js";
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -12,11 +13,13 @@ export function activate(context: vscode.ExtensionContext): void {
   const client = new ChatClient(output, telemetry);
   client.start();
   const provider = new ChatViewProvider(context, client, output);
+  const statusBar = new ChatStatusBar(client);
 
   context.subscriptions.push(
     output,
     telemetry,
     client,
+    statusBar,
     vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),

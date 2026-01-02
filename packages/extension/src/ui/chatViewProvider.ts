@@ -1,16 +1,19 @@
 import * as vscode from "vscode";
 import { ChatClient } from "../net/chatClient.js";
-import type { ServerEvent } from "@vscode-chat/protocol";
+import type { PresenceSnapshot, ServerEvent } from "@vscode-chat/protocol";
 import { ChatViewModel, deriveChatViewModel } from "./viewModel.js";
 import { UiInboundSchema, type ExtOutbound } from "./webviewProtocol.js";
 import { GitHubLoginSchema } from "../contract/githubProfile.js";
 import { GitHubProfileService } from "../net/githubProfile.js";
+import { deriveUnreadBadge, initialChatUnreadState, reduceChatUnread } from "./unreadBadge.js";
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   static readonly viewType = "vscodeChat.chatView";
 
   private view: vscode.WebviewView | undefined;
   private uiReady = false;
+  private unread = initialChatUnreadState();
+  private presence: PresenceSnapshot | undefined;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly githubProfiles: GitHubProfileService;
 
@@ -52,13 +55,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     this.disposables.push(
       this.client.onState((state) => {
+        if (state.status !== "connected") this.presence = undefined;
         if (!this.uiReady) return;
         const vm = deriveChatViewModel(state, this.backendUrl());
         this.postState(vm);
       }),
       this.client.onEvent((event) => this.onServerEvent(event)),
+      view.onDidChangeVisibility(() => this.onViewVisibilityChanged()),
+      view.onDidDispose(() => this.onViewDisposed()),
       view.webview.onDidReceiveMessage((msg: unknown) => this.onUiMessage(msg)),
     );
+
+    this.onViewVisibilityChanged();
   }
 
   onConfigChanged(): void {
@@ -84,6 +92,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.uiReady = true;
         await this.client.refreshAuthState().catch((err) => this.postError(String(err)));
         this.postStateSnapshot();
+        this.postPresenceSnapshot();
         if (vscode.workspace.getConfiguration("vscodeChat").get<boolean>("autoConnect", true)) {
           await this.client
             .connectIfSignedIn()
@@ -131,7 +140,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.postMessage({ type: "ext/history", history: event.history });
         return;
       case "server/message.new":
+        this.onNewMessage();
         this.postMessage({ type: "ext/message", message: event.message });
+        return;
+      case "server/presence":
+        this.presence = event.snapshot;
+        if (this.uiReady) this.postMessage({ type: "ext/presence", snapshot: event.snapshot });
         return;
       case "server/error":
         this.postError(event.message ?? event.code);
@@ -139,10 +153,52 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private onNewMessage(): void {
+    const view = this.view;
+    if (!view) return;
+
+    this.unread = reduceChatUnread(this.unread, {
+      type: "server/message.new",
+      viewVisible: view.visible,
+    });
+
+    this.applyUnreadBadge();
+  }
+
+  private onViewVisibilityChanged(): void {
+    const view = this.view;
+    if (!view) return;
+
+    this.unread = reduceChatUnread(this.unread, {
+      type: "view/visibility.changed",
+      visible: view.visible,
+    });
+
+    this.applyUnreadBadge();
+  }
+
+  private onViewDisposed(): void {
+    this.dispose();
+    this.view = undefined;
+    this.uiReady = false;
+  }
+
+  private applyUnreadBadge(): void {
+    const view = this.view;
+    if (!view) return;
+    const badge = deriveUnreadBadge(this.unread.unreadCount);
+    view.badge = badge;
+  }
+
   private postStateSnapshot(): void {
     const current = this.client.getState();
     const vm = deriveChatViewModel(current, this.backendUrl());
     this.postState(vm);
+  }
+
+  private postPresenceSnapshot(): void {
+    if (!this.presence) return;
+    this.postMessage({ type: "ext/presence", snapshot: this.presence });
   }
 
   private postState(state: ChatViewModel): void {
@@ -190,6 +246,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         <div class="status">
           <div class="line1" id="status1">disconnected</div>
           <div class="line2" id="status2"></div>
+          <button class="identityChip" id="btnIdentity" type="button" style="display: none">
+            <img class="identityAvatar" id="identityAvatar" alt="" />
+            <span class="identityLogin" id="identityLogin"></span>
+          </button>
+          <button
+            class="presenceButton"
+            id="btnPresence"
+            type="button"
+            style="display: none"
+            aria-expanded="false"
+            aria-controls="presencePanel"
+          >
+            Online: —
+          </button>
         </div>
         <div class="actions">
           <button class="secondary" id="btnSignIn">Sign in with GitHub</button>
@@ -218,6 +288,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           <button class="secondary" id="profileOpenOnGitHub">Open on GitHub</button>
         </div>
         <div class="profileError" id="profileError" style="display: none"></div>
+      </div>
+    </div>
+    <div class="presenceOverlay" id="presenceOverlay" style="display: none">
+      <div class="presenceCard" id="presenceCard" role="dialog" aria-modal="true" aria-label="Online users">
+        <div class="presenceHeader">
+          <div class="presenceTitle">Online users</div>
+          <button class="presenceClose" id="presenceClose" aria-label="Close">×</button>
+        </div>
+        <div class="presencePanel" id="presencePanel" role="list"></div>
       </div>
     </div>
     <script nonce="${nonce}" src="${jsUri.toString()}"></script>

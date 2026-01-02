@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AuthUserSchema, ChatMessageSchema } from "@vscode-chat/protocol";
+import { AuthUserSchema, ChatMessageSchema, PresenceSnapshotSchema } from "@vscode-chat/protocol";
 import { GitHubProfileSchema } from "../contract/githubProfile.js";
 import type { ChatViewModel } from "./viewModel.js";
 
@@ -79,6 +79,10 @@ const ExtHistorySchema = z.object({
   history: z.array(ChatMessageSchema),
 });
 const ExtMessageSchema = z.object({ type: z.literal("ext/message"), message: ChatMessageSchema });
+const ExtPresenceSchema = z.object({
+  type: z.literal("ext/presence"),
+  snapshot: PresenceSnapshotSchema,
+});
 const ExtErrorSchema = z.object({ type: z.literal("ext/error"), message: NonEmptyString });
 const ExtProfileResultSchema = z.object({
   type: z.literal("ext/profile.result"),
@@ -95,6 +99,7 @@ export const ExtOutboundSchema = z.discriminatedUnion("type", [
   ExtStateSchema,
   ExtHistorySchema,
   ExtMessageSchema,
+  ExtPresenceSchema,
   ExtErrorSchema,
   ExtProfileResultSchema,
   ExtProfileErrorSchema,

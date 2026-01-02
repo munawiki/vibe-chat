@@ -10,6 +10,11 @@ body {
   background: var(--vscode-editor-background);
 }
 
+.muted {
+  opacity: 0.75;
+  font-size: 12px;
+}
+
 .container {
   display: grid;
   grid-template-rows: auto 1fr auto;
@@ -37,6 +42,98 @@ body {
 
 .status .line2 {
   opacity: 0.75;
+  font-size: 12px;
+}
+
+.identityChip {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--vscode-editorWidget-background);
+  color: var(--vscode-foreground);
+  padding: 2px 8px 2px 2px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.identityChip:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.identityAvatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--vscode-editorWidget-border);
+}
+
+.identityLogin {
+  font-weight: 600;
+}
+
+.identityChip:hover .identityLogin {
+  text-decoration: underline;
+}
+
+.presenceButton {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  color: var(--vscode-textLink-foreground);
+  padding: 0;
+  margin-top: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.presenceButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.presencePanel {
+  margin-top: 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.presenceUser {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.presenceAvatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--vscode-editorWidget-border);
+}
+
+.presenceLogin {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.presenceAvatar.clickable,
+.presenceLogin.clickable {
+  cursor: pointer;
+}
+
+.presenceLogin.clickable:hover {
+  text-decoration: underline;
+}
+
+.presenceEmpty {
   font-size: 12px;
 }
 
@@ -70,14 +167,34 @@ button:disabled {
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
 .msg {
-  display: grid;
-  grid-template-columns: 28px 1fr;
+  width: 100%;
+  display: flex;
   gap: 10px;
-  align-items: start;
+  align-items: flex-start;
+}
+
+.msg .body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.msg.own {
+  flex-direction: row-reverse;
+}
+
+.msg.own .body {
+  align-items: flex-end;
+}
+
+.msg.own .meta {
+  justify-content: flex-end;
 }
 
 .avatar {
@@ -85,6 +202,7 @@ button:disabled {
   height: 28px;
   border-radius: 50%;
   background: var(--vscode-editorWidget-border);
+  margin-top: 2px;
 }
 
 .msg .meta {
@@ -97,6 +215,14 @@ button:disabled {
   font-weight: 600;
 }
 
+.msg.own .login {
+  display: none;
+}
+
+.msg.own .avatar {
+  display: none;
+}
+
 .msg .time {
   opacity: 0.7;
   font-size: 12px;
@@ -106,6 +232,8 @@ button:disabled {
   margin-top: 2px;
   white-space: pre-wrap;
   word-break: break-word;
+  display: inline-block;
+  max-width: min(70ch, 100%);
 }
 
 .avatar.clickable,
@@ -143,6 +271,49 @@ input[type="text"] {
 
 .error.visible {
   display: block;
+}
+
+.presenceOverlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.presenceCard {
+  width: min(360px, 100%);
+  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--vscode-editorWidget-background);
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.presenceHeader {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.presenceTitle {
+  flex: 1;
+  min-width: 0;
+  font-weight: 700;
+}
+
+.presenceClose {
+  border: 1px solid var(--vscode-editorWidget-border);
+  background: transparent;
+  color: var(--vscode-foreground);
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  line-height: 30px;
+  text-align: center;
+  padding: 0;
 }
 
 .profileOverlay {
