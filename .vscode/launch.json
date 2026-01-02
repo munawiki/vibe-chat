@@ -8,6 +8,31 @@
       "preLaunchTask": "Dev: All",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}/packages/extension"],
       "outFiles": ["${workspaceFolder}/packages/extension/dist/**/*.cjs"]
+    },
+    {
+      "name": "Run Extension (VS Code Chat, Isolated)",
+      "type": "extensionHost",
+      "request": "launch",
+      "preLaunchTask": "Dev: All",
+      "args": [
+        "--disable-extensions",
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/extension"
+      ],
+      "outFiles": ["${workspaceFolder}/packages/extension/dist/**/*.cjs"]
+    },
+    {
+      "name": "Run Extension (VS Code Chat, Isolated + Trace Warnings)",
+      "type": "extensionHost",
+      "request": "launch",
+      "preLaunchTask": "Dev: All",
+      "args": [
+        "--disable-extensions",
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/extension"
+      ],
+      "env": {
+        "VSCODE_NODE_OPTIONS": "--trace-warnings --trace-deprecation"
+      },
+      "outFiles": ["${workspaceFolder}/packages/extension/dist/**/*.cjs"]
     }
   ]
 }
