@@ -1,49 +1,34 @@
 import { z } from "zod";
+import {
+  GitHubLoginSchema,
+  GitHubProfileMetaSchema,
+  type GitHubProfile,
+} from "../contract/githubProfile.js";
 
-export const GitHubLoginSchema = z
-  .string()
-  .min(1)
-  .max(39)
-  .regex(/^[a-z\d](?:[a-z\d]|-(?=[a-z\d]))*$/i);
+export {
+  GitHubLoginSchema,
+  GitHubProfileMetaSchema,
+  GitHubProfileSchema,
+} from "../contract/githubProfile.js";
+export type { GitHubProfile } from "../contract/githubProfile.js";
 
-const GitHubUserApiResponseSchema = z.object({
-  login: z.string().min(1),
-  id: z.number().int().positive(),
-  avatar_url: z.string().url(),
-  html_url: z.string().url(),
+const GitHubUserApiResponseSchema = GitHubProfileMetaSchema.merge(
+  z.object({
+    login: z.string().min(1),
+    id: z.number().int().positive(),
+    avatar_url: z.string().url(),
+    html_url: z.string().url(),
 
-  name: z.string().min(1).nullable().optional(),
-  bio: z.string().nullable().optional(),
-  company: z.string().nullable().optional(),
-  location: z.string().nullable().optional(),
-  blog: z.string().nullable().optional(),
-  twitter_username: z.string().nullable().optional(),
+    twitter_username: z.string().nullable().optional(),
 
-  public_repos: z.number().int().nonnegative().optional(),
-  followers: z.number().int().nonnegative().optional(),
-  following: z.number().int().nonnegative().optional(),
+    public_repos: z.number().int().nonnegative().optional(),
+    followers: z.number().int().nonnegative().optional(),
+    following: z.number().int().nonnegative().optional(),
 
-  created_at: z.string().datetime().optional(),
-  updated_at: z.string().datetime().optional(),
-});
-
-export type GitHubProfile = {
-  login: string;
-  githubUserId: string;
-  avatarUrl: string;
-  htmlUrl: string;
-  name?: string | null;
-  bio?: string | null;
-  company?: string | null;
-  location?: string | null;
-  blog?: string | null;
-  twitterUsername?: string | null;
-  publicRepos?: number;
-  followers?: number;
-  following?: number;
-  createdAt?: string;
-  updatedAt?: string;
-};
+    created_at: z.string().datetime().optional(),
+    updated_at: z.string().datetime().optional(),
+  }),
+);
 
 export type GitHubProfileServiceOptions = {
   ttlMs?: number;

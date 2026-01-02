@@ -12,7 +12,15 @@ const TSCONFIG_ROOT_DIR = dirname(fileURLToPath(import.meta.url));
 /** @type {import("eslint").Linter.FlatConfig[]} */
 export default [
   {
-    ignores: ["**/node_modules/**", "**/dist/**", "**/out/**", "**/.wrangler/**", "**/*.d.ts"],
+    ignores: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/out/**",
+      "**/.wrangler/**",
+      "**/*.d.ts",
+      "packages/extension/media/webview.js",
+      "packages/extension/media/webview.js.map",
+    ],
   },
 
   {
@@ -51,6 +59,7 @@ export default [
         tsconfigRootDir: TSCONFIG_ROOT_DIR,
         project: [
           "./packages/extension/tsconfig.eslint.json",
+          "./packages/extension/tsconfig.webview.json",
           "./packages/protocol/tsconfig.eslint.json",
           "./packages/server/tsconfig.json",
         ],

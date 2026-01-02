@@ -1,9 +1,11 @@
 # Source / tooling
 src/**
 test/**
+webview-src/**
 node_modules/**
 esbuild.mjs
 tsconfig.json
+tsconfig.webview.json
 
 # Dev artifacts
 *.log
@@ -11,4 +13,4 @@ tsconfig.json
 
 # Optional debug artifacts (keep the VSIX minimal)
 dist/**/*.map
-
+media/**/*.map

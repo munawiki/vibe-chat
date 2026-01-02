@@ -2,8 +2,9 @@ import * as vscode from "vscode";
 import { ChatClient } from "../net/chatClient.js";
 import type { ServerEvent } from "@vscode-chat/protocol";
 import { ChatViewModel, deriveChatViewModel } from "./viewModel.js";
-import { UiInboundSchema } from "./webviewProtocol.js";
-import { GitHubLoginSchema, GitHubProfileService } from "../net/githubProfile.js";
+import { UiInboundSchema, type ExtOutbound } from "./webviewProtocol.js";
+import { GitHubLoginSchema } from "../contract/githubProfile.js";
+import { GitHubProfileService } from "../net/githubProfile.js";
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   static readonly viewType = "vscodeChat.chatView";
@@ -108,14 +109,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async onProfileOpen(login: string): Promise<void> {
-    if (!this.view) return;
-
     try {
       const profile = await this.githubProfiles.getProfile(login);
-      this.view.webview.postMessage({ type: "ext/profile.result", login, profile });
+      this.postMessage({ type: "ext/profile.result", login, profile });
     } catch (err) {
       const message = err instanceof Error ? err.message : "github_profile_unknown_error";
-      this.view.webview.postMessage({ type: "ext/profile.error", login, message });
+      this.postMessage({ type: "ext/profile.error", login, message });
     }
   }
 
@@ -127,13 +126,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private onServerEvent(event: ServerEvent): void {
-    if (!this.view) return;
     switch (event.type) {
       case "server/welcome":
-        this.view.webview.postMessage({ type: "ext/history", history: event.history });
+        this.postMessage({ type: "ext/history", history: event.history });
         return;
       case "server/message.new":
-        this.view.webview.postMessage({ type: "ext/message", message: event.message });
+        this.postMessage({ type: "ext/message", message: event.message });
         return;
       case "server/error":
         this.postError(event.message ?? event.code);
@@ -148,13 +146,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private postState(state: ChatViewModel): void {
-    if (!this.view) return;
-    this.view.webview.postMessage({ type: "ext/state", state });
+    this.postMessage({ type: "ext/state", state });
   }
 
   private postError(message: string): void {
+    this.postMessage({ type: "ext/error", message });
+  }
+
+  private postMessage(message: ExtOutbound): void {
     if (!this.view) return;
-    this.view.webview.postMessage({ type: "ext/error", message });
+    void this.view.webview.postMessage(message);
   }
 
   private backendUrl(): string | undefined {

@@ -8,6 +8,13 @@ function jsonResponse(payload: unknown): Response {
   });
 }
 
+const OCTOCAT_PAYLOAD = {
+  login: "octocat",
+  id: 1,
+  avatar_url: "https://example.com/a.png",
+  html_url: "https://github.com/octocat",
+} as const;
+
 describe("GitHubProfileService", () => {
   it("rejects invalid logins", async () => {
     const svc = new GitHubProfileService({
@@ -36,14 +43,7 @@ describe("GitHubProfileService", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fetchCalls).toBe(1);
-    resolveFetch(
-      jsonResponse({
-        login: "octocat",
-        id: 1,
-        avatar_url: "https://example.com/a.png",
-        html_url: "https://github.com/octocat",
-      }),
-    );
+    resolveFetch(jsonResponse(OCTOCAT_PAYLOAD));
 
     const [r1, r2] = await Promise.all([p1, p2]);
     expect(r1.githubUserId).toBe("1");
@@ -54,14 +54,7 @@ describe("GitHubProfileService", () => {
     let fetchCalls = 0;
     const fetchImpl: typeof fetch = () => {
       fetchCalls += 1;
-      return Promise.resolve(
-        jsonResponse({
-          login: "octocat",
-          id: 1,
-          avatar_url: "https://example.com/a.png",
-          html_url: "https://github.com/octocat",
-        }),
-      );
+      return Promise.resolve(jsonResponse(OCTOCAT_PAYLOAD));
     };
 
     const svc = new GitHubProfileService({ fetchImpl, ttlMs: 60_000, nowMs: () => 0 });
@@ -76,14 +69,7 @@ describe("GitHubProfileService", () => {
     let fetchCalls = 0;
     const fetchImpl: typeof fetch = () => {
       fetchCalls += 1;
-      return Promise.resolve(
-        jsonResponse({
-          login: "octocat",
-          id: 1,
-          avatar_url: "https://example.com/a.png",
-          html_url: "https://github.com/octocat",
-        }),
-      );
+      return Promise.resolve(jsonResponse(OCTOCAT_PAYLOAD));
     };
 
     const svc = new GitHubProfileService({ fetchImpl, ttlMs: 1000, nowMs: () => now });

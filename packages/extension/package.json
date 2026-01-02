@@ -74,7 +74,7 @@
   "scripts": {
     "build": "node ./esbuild.mjs",
     "watch": "node ./esbuild.mjs --watch",
-    "lint": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.webview.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
