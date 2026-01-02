@@ -1,4 +1,4 @@
-import { ChatClientState } from "../net/chatClient.js";
+import type { ChatClientState } from "../core/chatClientCore.js";
 
 export type ChatHeaderAction = {
   visible: boolean;
