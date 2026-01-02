@@ -22,3 +22,10 @@ SESSION_SECRET=replace-with-a-long-random-string-at-least-32-chars
 # Recent history controls.
 # CHAT_HISTORY_LIMIT=200
 # CHAT_HISTORY_PERSIST_EVERY_N_MESSAGES=1
+
+# Optional: denylist-based message content policy (zero-cost).
+# When enabled, messages that match the profanity preset + denylist are rejected (not persisted or broadcast).
+# CHAT_CONTENT_FILTER_MODE=off
+# CHAT_CONTENT_FILTER_LANGUAGES=en,ko
+# CHAT_CONTENT_DENYLIST=word1,word2
+# CHAT_CONTENT_ALLOWLIST=word3

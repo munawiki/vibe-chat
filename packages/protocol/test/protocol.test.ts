@@ -34,6 +34,30 @@ describe("protocol schemas", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts server/error for content policy violation", () => {
+    const result = ServerEventSchema.safeParse({
+      version: PROTOCOL_VERSION,
+      type: "server/error",
+      code: "content_policy_violation",
+      message: "Message rejected by content policy",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts server/presence snapshot", () => {
+    const result = ServerEventSchema.safeParse({
+      version: PROTOCOL_VERSION,
+      type: "server/presence",
+      snapshot: [
+        {
+          user: { githubUserId: "123", login: "octocat", avatarUrl: "https://example.com/a.png" },
+          connections: 2,
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
   it("accepts session exchange response", () => {
     const result = SessionExchangeResponseSchema.safeParse({
       token: "token",

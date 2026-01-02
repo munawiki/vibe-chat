@@ -14,6 +14,7 @@ describe("server config", () => {
         maxConnectionsPerUser: 3,
         historyLimit: 200,
         historyPersistEveryNMessages: 1,
+        contentPolicy: { mode: "off", languages: ["en", "ko"], denylist: [], allowlist: [] },
       },
     });
     expect(parsed.config.chatRoom.maxConnectionsPerRoom).toBeUndefined();
@@ -40,6 +41,7 @@ describe("server config", () => {
       maxConnectionsPerRoom: 10,
       historyLimit: 50,
       historyPersistEveryNMessages: 5,
+      contentPolicy: { mode: "off", languages: ["en", "ko"], denylist: [], allowlist: [] },
     });
   });
 
@@ -52,5 +54,33 @@ describe("server config", () => {
 
     expect(parsed.error.type).toBe("invalid_config");
     expect(parsed.error.issues.map((i) => i.path)).toContain("CHAT_MESSAGE_RATE_WINDOW_MS");
+  });
+
+  it("rejects invalid content filter language codes", () => {
+    const parsed = parseServerConfig({
+      CHAT_CONTENT_FILTER_LANGUAGES: "xx",
+    });
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+
+    expect(parsed.error.type).toBe("invalid_config");
+    expect(parsed.error.issues.map((i) => i.path)).toContain("CHAT_CONTENT_FILTER_LANGUAGES.0");
+  });
+
+  it("accepts content filter languages 'all'", () => {
+    const parsed = parseServerConfig({
+      CHAT_CONTENT_FILTER_LANGUAGES: "all",
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.config.chatRoom.contentPolicy.languages.length).toBeGreaterThan(2);
+  });
+
+  it("accepts content filtering with default language presets", () => {
+    const parsed = parseServerConfig({
+      CHAT_CONTENT_FILTER_MODE: "reject",
+    });
+    expect(parsed.ok).toBe(true);
   });
 });

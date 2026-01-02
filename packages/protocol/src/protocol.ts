@@ -60,9 +60,29 @@ export const ServerMessageNewSchema = BaseEventSchema.extend({
   message: ChatMessageSchema,
 });
 
+export const PresenceEntrySchema = z.object({
+  user: AuthUserSchema,
+  connections: z.number().int().min(1),
+});
+export type PresenceEntry = z.infer<typeof PresenceEntrySchema>;
+
+export const PresenceSnapshotSchema = z.array(PresenceEntrySchema);
+export type PresenceSnapshot = z.infer<typeof PresenceSnapshotSchema>;
+
+export const ServerPresenceSchema = BaseEventSchema.extend({
+  type: z.literal("server/presence"),
+  snapshot: PresenceSnapshotSchema,
+});
+
 export const ServerErrorSchema = BaseEventSchema.extend({
   type: z.literal("server/error"),
-  code: z.enum(["invalid_payload", "rate_limited", "auth_expired", "server_error"]),
+  code: z.enum([
+    "invalid_payload",
+    "rate_limited",
+    "content_policy_violation",
+    "auth_expired",
+    "server_error",
+  ]),
   message: z.string().min(1).optional(),
   retryAfterMs: z.number().int().positive().optional(),
 });
@@ -70,6 +90,7 @@ export const ServerErrorSchema = BaseEventSchema.extend({
 export const ServerEventSchema = z.discriminatedUnion("type", [
   ServerWelcomeSchema,
   ServerMessageNewSchema,
+  ServerPresenceSchema,
   ServerErrorSchema,
 ]);
 export type ServerEvent = z.infer<typeof ServerEventSchema>;

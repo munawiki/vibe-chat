@@ -18,6 +18,10 @@ export interface Env {
   CHAT_MAX_CONNECTIONS_PER_ROOM?: string;
   CHAT_HISTORY_LIMIT?: string;
   CHAT_HISTORY_PERSIST_EVERY_N_MESSAGES?: string;
+  CHAT_CONTENT_FILTER_MODE?: string;
+  CHAT_CONTENT_FILTER_LANGUAGES?: string;
+  CHAT_CONTENT_DENYLIST?: string;
+  CHAT_CONTENT_ALLOWLIST?: string;
 }
 
 const ExchangeRequestSchema = z.object({

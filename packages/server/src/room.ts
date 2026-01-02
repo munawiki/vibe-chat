@@ -16,7 +16,10 @@ import {
   nextHistoryPersistence,
   nextFixedWindowRateLimit,
 } from "./policy/chatRoomPolicy.js";
-import type { ChatRoomGuardrails } from "./config.js";
+import type { ChatContentPolicyLanguage, ChatRoomGuardrails } from "./config.js";
+import { derivePresenceSnapshotFromWebSockets } from "./presence.js";
+import { profaneWords } from "@2toad/profanity";
+import { buildCompiledDenylist, violatesDenylist } from "./policy/contentPolicy.js";
 
 type SocketAttachment = {
   user: {
@@ -32,6 +35,7 @@ export class ChatRoom implements DurableObject {
   private readonly historyReady: Promise<void>;
   private history: ChatMessage[] = [];
   private readonly config: ChatRoomGuardrails;
+  private readonly compiledContentDenylist: ReadonlyArray<string>;
   private historyPendingPersistCount = 0;
   private readonly rateByUser = new Map<string, RateWindow>();
   private readonly connectRateByIp = new Map<string, RateWindow>();
@@ -51,6 +55,18 @@ export class ChatRoom implements DurableObject {
     }
 
     this.config = configParsed.config.chatRoom;
+    this.compiledContentDenylist =
+      this.config.contentPolicy.mode === "reject"
+        ? buildCompiledDenylist({
+            presetDenylist: resolveProfanityPresetWords(this.config.contentPolicy.languages),
+            extraDenylist: this.config.contentPolicy.denylist,
+            allowlist: this.config.contentPolicy.allowlist,
+          })
+        : [];
+    if (this.config.contentPolicy.mode === "reject" && this.compiledContentDenylist.length === 0) {
+      this.log({ type: "invalid_config", scope: "chat_room_content_policy", issues: [] });
+      throw new Error("invalid_config");
+    }
     this.historyReady = this.loadHistory();
     this.deniedGithubUserIds = parseGithubUserIdDenylist(this.env.DENY_GITHUB_USER_IDS);
   }
@@ -125,6 +141,8 @@ export class ChatRoom implements DurableObject {
       } satisfies ServerEvent),
     );
 
+    this.broadcastPresence();
+
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -168,6 +186,18 @@ export class ChatRoom implements DurableObject {
           return;
         }
 
+        if (
+          this.config.contentPolicy.mode === "reject" &&
+          violatesDenylist(parsed.data.text, this.compiledContentDenylist)
+        ) {
+          this.log({ type: "chat_content_policy_violation" });
+          this.sendError(ws, {
+            code: "content_policy_violation",
+            message: "Message rejected by content policy",
+          });
+          return;
+        }
+
         const newMessage = createChatMessage({
           id: crypto.randomUUID(),
           user,
@@ -186,11 +216,13 @@ export class ChatRoom implements DurableObject {
     }
   }
 
-  async webSocketClose(_ws: WebSocket): Promise<void> {
-    // no-op: state.getWebSockets() excludes closed sockets eventually.
+  webSocketClose(ws: WebSocket): void {
+    // Best-effort: state.getWebSockets() excludes closed sockets eventually.
+    // Exclude the socket explicitly to avoid transient over-counting.
+    this.broadcastPresence({ exclude: ws });
   }
 
-  async webSocketError(_ws: WebSocket): Promise<void> {
+  webSocketError(_ws: WebSocket): void {
     // no-op
   }
 
@@ -229,6 +261,15 @@ export class ChatRoom implements DurableObject {
         // ignore
       }
     }
+  }
+
+  private broadcastPresence(opts?: { exclude?: WebSocket }): void {
+    const snapshot = derivePresenceSnapshotFromWebSockets(this.state.getWebSockets(), opts);
+    this.broadcast({
+      version: PROTOCOL_VERSION,
+      type: "server/presence",
+      snapshot,
+    } satisfies ServerEvent);
   }
 
   private sendError(
@@ -305,4 +346,16 @@ function countConnectionsForUser(webSockets: WebSocket[], githubUserId: string):
     }
   }
   return count;
+}
+
+function resolveProfanityPresetWords(
+  languages: ReadonlyArray<ChatContentPolicyLanguage>,
+): ReadonlyArray<string> {
+  const words: string[] = [];
+  for (const language of languages) {
+    const list = profaneWords.get(language);
+    if (!list) continue;
+    words.push(...list);
+  }
+  return words;
 }
