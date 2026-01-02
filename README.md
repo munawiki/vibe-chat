@@ -25,4 +25,3 @@ A VS Code extension that lets you join a single shared chat room using GitHub si
 ## License
 
 Apache-2.0
-
