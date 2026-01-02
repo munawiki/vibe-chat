@@ -7,13 +7,16 @@ import {
   ServerEventSchema,
 } from "@vscode-chat/protocol";
 import { verifySessionToken } from "./session.js";
+import { parseServerConfig } from "./config.js";
 import { getClientIp, parseBearerToken, parseGithubUserIdDenylist } from "./util.js";
 import type { RateWindow } from "./util.js";
 import {
   appendHistory as appendHistoryPolicy,
   createChatMessage,
+  nextHistoryPersistence,
   nextFixedWindowRateLimit,
 } from "./policy/chatRoomPolicy.js";
+import type { ChatRoomGuardrails } from "./config.js";
 
 type SocketAttachment = {
   user: {
@@ -24,24 +27,30 @@ type SocketAttachment = {
 };
 
 const HISTORY_KEY = "history";
-const HISTORY_LIMIT = 200;
-const RATE_WINDOW_MS = 10_000;
-const RATE_MAX_COUNT = 5;
-const CONNECT_RATE_WINDOW_MS = 10_000;
-const CONNECT_RATE_MAX_COUNT = 20;
-const MAX_CONNECTIONS_PER_USER = 3;
 
 export class ChatRoom implements DurableObject {
   private readonly historyReady: Promise<void>;
   private history: ChatMessage[] = [];
+  private readonly config: ChatRoomGuardrails;
+  private historyPendingPersistCount = 0;
   private readonly rateByUser = new Map<string, RateWindow>();
   private readonly connectRateByIp = new Map<string, RateWindow>();
   private readonly deniedGithubUserIds: Set<string>;
 
   constructor(
     private readonly state: DurableObjectState,
-    private readonly env: { SESSION_SECRET: string; DENY_GITHUB_USER_IDS?: string },
+    private readonly env: { SESSION_SECRET: string; DENY_GITHUB_USER_IDS?: string } & Record<
+      string,
+      unknown
+    >,
   ) {
+    const configParsed = parseServerConfig(this.env);
+    if (!configParsed.ok) {
+      this.log({ type: "invalid_config", issues: configParsed.error.issues, scope: "chat_room" });
+      throw new Error("invalid_config");
+    }
+
+    this.config = configParsed.config.chatRoom;
     this.historyReady = this.loadHistory();
     this.deniedGithubUserIds = parseGithubUserIdDenylist(this.env.DENY_GITHUB_USER_IDS);
   }
@@ -80,11 +89,20 @@ export class ChatRoom implements DurableObject {
       return new Response("Forbidden", { status: 403 });
     }
 
+    const maxConnectionsPerRoom = this.config.maxConnectionsPerRoom;
+    if (maxConnectionsPerRoom !== undefined) {
+      const activeRoomConnections = this.state.getWebSockets().length;
+      if (activeRoomConnections >= maxConnectionsPerRoom) {
+        this.log({ type: "ws_connect_room_full", maxConnectionsPerRoom });
+        return new Response("Room is full", { status: 429 });
+      }
+    }
+
     const activeConnections = countConnectionsForUser(
       this.state.getWebSockets(),
       user.githubUserId,
     );
-    if (activeConnections >= MAX_CONNECTIONS_PER_USER) {
+    if (activeConnections >= this.config.maxConnectionsPerUser) {
       this.log({ type: "ws_connect_too_many_connections" });
       return new Response("Too many connections", { status: 429 });
     }
@@ -186,12 +204,20 @@ export class ChatRoom implements DurableObject {
       if (parsed.success) valid.push(parsed.data);
     }
 
-    this.history = valid.slice(-HISTORY_LIMIT);
+    this.history = this.config.historyLimit <= 0 ? [] : valid.slice(-this.config.historyLimit);
   }
 
   private async appendHistory(message: ChatMessage): Promise<void> {
-    this.history = appendHistoryPolicy(this.history, message, HISTORY_LIMIT);
-    await this.state.storage.put(HISTORY_KEY, this.history);
+    this.history = appendHistoryPolicy(this.history, message, this.config.historyLimit);
+
+    const persistence = nextHistoryPersistence(
+      this.historyPendingPersistCount,
+      this.config.historyPersistEveryNMessages,
+    );
+    this.historyPendingPersistCount = persistence.nextPendingCount;
+    if (persistence.shouldPersist) {
+      await this.state.storage.put(HISTORY_KEY, this.history);
+    }
   }
 
   private broadcast(event: ServerEvent): void {
@@ -232,8 +258,8 @@ export class ChatRoom implements DurableObject {
   ): { allowed: true } | { allowed: false; retryAfterMs: number } {
     const nowMs = Date.now();
     const decision = nextFixedWindowRateLimit(this.rateByUser.get(githubUserId), nowMs, {
-      windowMs: RATE_WINDOW_MS,
-      maxCount: RATE_MAX_COUNT,
+      windowMs: this.config.messageRate.windowMs,
+      maxCount: this.config.messageRate.maxCount,
     });
 
     this.rateByUser.set(githubUserId, decision.nextWindow);
@@ -247,8 +273,8 @@ export class ChatRoom implements DurableObject {
   ): { allowed: true } | { allowed: false; retryAfterMs: number } {
     const nowMs = Date.now();
     const decision = nextFixedWindowRateLimit(this.connectRateByIp.get(key), nowMs, {
-      windowMs: CONNECT_RATE_WINDOW_MS,
-      maxCount: CONNECT_RATE_MAX_COUNT,
+      windowMs: this.config.connectRate.windowMs,
+      maxCount: this.config.connectRate.maxCount,
     });
 
     this.connectRateByIp.set(key, decision.nextWindow);

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ChatRoom } from "./room.js";
 import { exchangeGithubTokenForSession } from "./session.js";
 import { TelemetryEventSchema } from "@vscode-chat/protocol";
+import { parseServerConfig } from "./config.js";
 import { checkFixedWindowRateLimit, getClientIp } from "./util.js";
 import type { RateWindow } from "./util.js";
 
@@ -9,6 +10,14 @@ export interface Env {
   CHAT_ROOM: DurableObjectNamespace;
   SESSION_SECRET: string;
   DENY_GITHUB_USER_IDS?: string;
+  CHAT_MESSAGE_RATE_WINDOW_MS?: string;
+  CHAT_MESSAGE_RATE_MAX_COUNT?: string;
+  CHAT_CONNECT_RATE_WINDOW_MS?: string;
+  CHAT_CONNECT_RATE_MAX_COUNT?: string;
+  CHAT_MAX_CONNECTIONS_PER_USER?: string;
+  CHAT_MAX_CONNECTIONS_PER_ROOM?: string;
+  CHAT_HISTORY_LIMIT?: string;
+  CHAT_HISTORY_PERSIST_EVERY_N_MESSAGES?: string;
 }
 
 const ExchangeRequestSchema = z.object({
@@ -27,6 +36,12 @@ const NO_STORE_HEADERS = {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const configParsed = parseServerConfig(env);
+    if (!configParsed.ok) {
+      log({ type: "invalid_config", issues: configParsed.error.issues, scope: "worker" });
+      return json({ error: "server_misconfigured" }, 500);
+    }
+
     const url = new URL(request.url);
 
     if (url.pathname === "/health") {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendHistory,
   createChatMessage,
+  nextHistoryPersistence,
   nextFixedWindowRateLimit,
 } from "../src/policy/chatRoomPolicy.js";
 
@@ -45,5 +46,22 @@ describe("chatRoomPolicy", () => {
 
     const h3 = appendHistory(h2, m3, 2);
     expect(h3).toEqual([m2, m3]);
+  });
+
+  it("returns empty history when limit is 0", () => {
+    const m1 = createChatMessage({
+      id: "1",
+      user: { githubUserId: "123", login: "octocat", avatarUrl: "https://example.com/a.png" },
+      text: "hi",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(appendHistory([], m1, 0)).toEqual([]);
+  });
+
+  it("persists history every N messages", () => {
+    expect(nextHistoryPersistence(0, 3)).toEqual({ shouldPersist: false, nextPendingCount: 1 });
+    expect(nextHistoryPersistence(1, 3)).toEqual({ shouldPersist: false, nextPendingCount: 2 });
+    expect(nextHistoryPersistence(2, 3)).toEqual({ shouldPersist: true, nextPendingCount: 0 });
   });
 });

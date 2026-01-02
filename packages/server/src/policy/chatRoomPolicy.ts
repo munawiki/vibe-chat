@@ -32,7 +32,19 @@ export function appendHistory(
   message: ChatMessage,
   limit: number,
 ): ChatMessage[] {
+  if (limit <= 0) return [];
   return [...history, message].slice(-limit);
+}
+
+export function nextHistoryPersistence(
+  previousPendingCount: number,
+  persistEveryNMessages: number,
+): { shouldPersist: boolean; nextPendingCount: number } {
+  const nextPendingCount = previousPendingCount + 1;
+  if (nextPendingCount >= persistEveryNMessages) {
+    return { shouldPersist: true, nextPendingCount: 0 };
+  }
+  return { shouldPersist: false, nextPendingCount };
 }
 
 export function createChatMessage(options: {
