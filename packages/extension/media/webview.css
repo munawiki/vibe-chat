@@ -44,6 +44,36 @@ body {
   height: 100vh;
 }
 
+/* Why:
+   - When `#dmPanel` is `[hidden]`, it becomes `display:none` and is removed from layout.
+   - Without explicit grid placement, the remaining children auto-flow upward, which can place `.composer`
+     into the `1fr` row, making the input/button area expand to fill the viewport.
+   Invariant:
+   - `.composer` must remain auto-sized at the bottom, regardless of which optional panels are hidden. */
+.header {
+  grid-row: 1;
+}
+
+.channelTabs {
+  grid-row: 2;
+}
+
+.dmPanel {
+  grid-row: 3;
+}
+
+.messages {
+  grid-row: 4;
+}
+
+.composer {
+  grid-row: 5;
+}
+
+.error {
+  grid-row: 6;
+}
+
 .header {
   padding: 10px 12px;
   border-bottom: 1px solid var(--vscode-editorWidget-border);

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.4
+
+- Fix composer stretching when optional panels are hidden.
+
 ## 0.0.3
 
 - Fix composer sizing when VS Code provides unitless line-height.
