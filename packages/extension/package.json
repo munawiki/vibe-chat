@@ -2,7 +2,7 @@
   "name": "vibe-chat",
   "displayName": "Vibe Chat",
   "description": "A single shared chat room for VS Code using GitHub sign-in.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": false,
   "license": "Apache-2.0",
   "publisher": "munawiki",
@@ -20,6 +20,7 @@
   "categories": [
     "Other"
   ],
+  "icon": "media/icon.png",
   "main": "./dist/extension.cjs",
   "activationEvents": [
     "onView:vscodeChat.chatView",
