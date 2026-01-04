@@ -115,8 +115,15 @@ jobs:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
       - name: Publish to Open VSX
-        if: ${{ secrets.OVSX_PAT != '' }}
-        run: pnpm -s dlx ovsx publish -i "./${{ env.VSIX_FILE }}" --no-dependencies
+        run: |
+          set -euo pipefail
+
+          if [ -z "${OVSX_PAT:-}" ]; then
+            echo "OVSX_PAT not set; skipping Open VSX publish."
+            exit 0
+          fi
+
+          pnpm -s dlx ovsx publish -i "./${{ env.VSIX_FILE }}" --no-dependencies
         working-directory: packages/extension
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
