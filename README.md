@@ -1,4 +1,4 @@
-# VS Code Chat
+# Vibe Chat
 
 A VS Code extension that lets you join a single shared chat room using GitHub sign-in. Includes a Cloudflare Workers + Durable Objects backend.
 
@@ -11,7 +11,7 @@ A VS Code extension that lets you join a single shared chat room using GitHub si
 
 - `pnpm install`
 - `pnpm dev` (starts backend + extension watch; bootstraps `packages/server/.dev.vars` if needed)
-- In VS Code, run the `Run Extension (VS Code Chat)` launch config (F5). It will run the `Dev: All` task automatically.
+- In VS Code, run the `Run Extension (Vibe Chat)` launch config (F5). It will run the `Dev: All` task automatically.
 
 ## Configuration
 
@@ -26,5 +26,3 @@ A VS Code extension that lets you join a single shared chat room using GitHub si
 ## License
 
 Apache-2.0
-
-

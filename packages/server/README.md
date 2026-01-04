@@ -1,6 +1,6 @@
 # @vscode-chat/server
 
-Cloudflare Workers + Durable Objects backend for VS Code Chat.
+Cloudflare Workers + Durable Objects backend for Vibe Chat.
 
 ## Local development
 
@@ -39,5 +39,3 @@ Optional environment variables allow enforcing a denylist-based content policy:
 - `CHAT_CONTENT_ALLOWLIST` (comma/newline-separated allowlist terms)
 
 See `.dev.vars.example` for recommended defaults and operational guidance.
-
-

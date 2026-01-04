@@ -31,23 +31,92 @@ jobs:
             exit 1
           fi
 
+      - name: Verify GitHub Release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if ! gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::error::GitHub Release not found for tag '$TAG'."
+            echo "Create a GitHub Release for '$TAG' and upload the packaged VSIX asset."
+            echo "Expected asset name: vibe-chat-$TAG.vsix"
+            exit 1
+          fi
+
       - name: Download VSIX from GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
         run: |
+          set -euo pipefail
+
+          expected1="vibe-chat-$TAG.vsix"
+          expected2="vibe-chat-${TAG#v}.vsix"
+
           gh release download "$TAG" \
-            --pattern "vscode-chat-$TAG.vsix" \
-            --dir packages/extension
+            --repo "${GITHUB_REPOSITORY}" \
+            -p "$expected1" \
+            -p "$expected2" \
+            --dir packages/extension \
+            --clobber || true
+
+          if [ -f "packages/extension/$expected1" ]; then
+            echo "VSIX_FILE=$expected1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          if [ -f "packages/extension/$expected2" ]; then
+            echo "VSIX_FILE=$expected2" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          echo "::error::VSIX asset not found in GitHub Release '$TAG'."
+          echo "Upload one of these assets to the GitHub Release, then rerun:"
+          echo "  - $expected1 (recommended)"
+          echo "  - $expected2 (accepted for convenience)"
+          echo ""
+          echo "Existing assets in the release:"
+          gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' || true
+          exit 1
+
+      - name: Verify VSIX matches tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          vsix="packages/extension/${VSIX_FILE}"
+          expected_version="${TAG#v}"
+
+          actual_version="$(unzip -p "$vsix" extension/package.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")"
+          actual_publisher="$(unzip -p "$vsix" extension/package.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).publisher")"
+          actual_name="$(unzip -p "$vsix" extension/package.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).name")"
+
+          if [ "$actual_version" != "$expected_version" ]; then
+            echo "::error::VSIX version mismatch (tag=$TAG vsix=$actual_version)."
+            exit 1
+          fi
+
+          if [ "$actual_publisher" != "munawiki" ] || [ "$actual_name" != "vibe-chat" ]; then
+            echo "::error::Unexpected VSIX identity (publisher=$actual_publisher name=$actual_name)."
+            exit 1
+          fi
 
       - name: Publish to Visual Studio Marketplace
-        run: pnpm -s dlx @vscode/vsce publish -i ./vscode-chat-${{ inputs.tag }}.vsix --no-dependencies --no-yarn
+        run: |
+          set -euo pipefail
+
+          pnpm -s dlx @vscode/vsce verify-pat munawiki
+          pnpm -s dlx @vscode/vsce publish -i "./${{ env.VSIX_FILE }}" --no-dependencies --no-yarn
         working-directory: packages/extension
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
       - name: Publish to Open VSX
-        run: pnpm -s dlx ovsx publish -i ./vscode-chat-${{ inputs.tag }}.vsix --no-dependencies
+        if: ${{ secrets.OVSX_PAT != '' }}
+        run: pnpm -s dlx ovsx publish -i "./${{ env.VSIX_FILE }}" --no-dependencies
         working-directory: packages/extension
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}

@@ -40,7 +40,7 @@ export function deriveChatStatusBarPresentation(
       : `${icon} Chat: ${statusText} · Online: ${onlineCount}`;
 
   const tooltipLines: string[] = [
-    "**VS Code Chat**",
+    "**Vibe Chat**",
     `Status: ${toMarkdownCodeSpan(state.status)}`,
     `Online: ${toMarkdownCodeSpan(onlineCount)}`,
   ];

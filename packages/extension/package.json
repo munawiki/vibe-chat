@@ -1,18 +1,18 @@
 {
-  "name": "vscode-chat",
-  "displayName": "VS Code Chat",
+  "name": "vibe-chat",
+  "displayName": "Vibe Chat",
   "description": "A single shared chat room for VS Code using GitHub sign-in.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": false,
   "license": "Apache-2.0",
   "publisher": "munawiki",
   "repository": {
     "type": "git",
-    "url": "https://github.com/munawiki/vscode-chat.git"
+    "url": "https://github.com/munawiki/vibe-chat.git"
   },
-  "homepage": "https://github.com/munawiki/vscode-chat",
+  "homepage": "https://github.com/munawiki/vibe-chat",
   "bugs": {
-    "url": "https://github.com/munawiki/vscode-chat/issues"
+    "url": "https://github.com/munawiki/vibe-chat/issues"
   },
   "engines": {
     "vscode": "^1.90.0"
@@ -30,15 +30,15 @@
     "commands": [
       {
         "command": "vscodeChat.openChat",
-        "title": "VS Code Chat: Open"
+        "title": "Vibe Chat: Open"
       },
       {
         "command": "vscodeChat.signIn",
-        "title": "VS Code Chat: Sign in with GitHub"
+        "title": "Vibe Chat: Sign in with GitHub"
       }
     ],
     "configuration": {
-      "title": "VS Code Chat",
+      "title": "Vibe Chat",
       "properties": {
         "vscodeChat.backendUrl": {
           "type": "string",
@@ -56,7 +56,7 @@
       "activitybar": [
         {
           "id": "vscodeChat",
-          "title": "VS Code Chat",
+          "title": "Vibe Chat",
           "icon": "media/icon.svg"
         }
       ]

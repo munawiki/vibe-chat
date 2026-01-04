@@ -14,14 +14,17 @@
     "format:check": "prettier . --check",
     "check": "pnpm format:check && pnpm lint:eslint && pnpm lint && pnpm test",
     "dev:server": "pnpm --filter @vscode-chat/server dev",
-    "dev:extension": "pnpm --filter vscode-chat watch"
+    "dev:extension": "pnpm --filter vibe-chat watch"
   },
   "devDependencies": {
     "@eslint/js": "^9.20.0",
+    "cloc": "^2.6.0-cloc",
+    "dependency-cruiser": "^17.3.5",
     "eslint": "^9.20.0",
     "eslint-config-prettier": "^10.0.1",
     "globals": "^15.14.0",
     "husky": "^9.1.7",
+    "jscpd": "^4.0.5",
     "lint-staged": "^16.2.7",
     "prettier": "^3.5.0",
     "typescript": "^5.7.3",

@@ -1,4 +1,4 @@
-# VS Code Chat
+# Vibe Chat
 
 A VS Code extension that lets you join a single shared chat room using GitHub sign-in.
 

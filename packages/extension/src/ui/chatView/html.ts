@@ -32,7 +32,7 @@ export function renderChatWebviewHtml(options: {
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="stylesheet" href="${cssUri.toString()}" />
-    <title>VS Code Chat</title>
+    <title>Vibe Chat</title>
   </head>
   <body>
     <div class="container">

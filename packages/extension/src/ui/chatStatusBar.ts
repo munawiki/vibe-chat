@@ -12,7 +12,7 @@ export class ChatStatusBar implements vscode.Disposable {
 
   constructor(client: ChatClient) {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    this.item.name = "VS Code Chat";
+    this.item.name = "Vibe Chat";
     this.item.command = "vscodeChat.openChat";
 
     this.state = client.getState();

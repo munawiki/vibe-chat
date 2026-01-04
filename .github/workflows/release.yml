@@ -1,0 +1,66 @@
+name: Release (VSIX)
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: corepack enable
+
+      - name: Assert public mirror repository
+        run: |
+          if [ -d openspec ]; then
+            echo "Refusing to release from the private workspace."
+            echo "Create the tag in the public mirror repository."
+            exit 1
+          fi
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+
+      - name: Verify tag matches extension version
+        run: |
+          set -euo pipefail
+
+          node -e '
+            const tag = process.argv[1];
+            const pkg = require("./packages/extension/package.json");
+            const expected = `v${pkg.version}`;
+            if (tag !== expected) {
+              console.error(`Tag/version mismatch: expected ${expected} but got ${tag}`);
+              process.exit(1);
+            }
+            console.log(`Release tag verified: ${tag}`);
+          ' "${{ github.ref_name }}"
+
+      - name: Build extension
+        run: pnpm --filter vibe-chat build
+
+      - name: Package VSIX
+        run: pnpm -s dlx @vscode/vsce package --no-dependencies --no-yarn --out ./vibe-chat-${{ github.ref_name }}.vsix
+        working-directory: packages/extension
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibe-chat-${{ github.ref_name }}
+          path: packages/extension/vibe-chat-${{ github.ref_name }}.vsix
+
+      - name: Attach VSIX to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/extension/vibe-chat-${{ github.ref_name }}.vsix

@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run Extension (VS Code Chat)",
+      "name": "Run Extension (Vibe Chat)",
       "type": "extensionHost",
       "request": "launch",
       "preLaunchTask": "Dev: All",
@@ -10,7 +10,7 @@
       "outFiles": ["${workspaceFolder}/packages/extension/dist/**/*.cjs"]
     },
     {
-      "name": "Run Extension (VS Code Chat, Isolated)",
+      "name": "Run Extension (Vibe Chat, Isolated)",
       "type": "extensionHost",
       "request": "launch",
       "preLaunchTask": "Dev: All",
@@ -21,7 +21,7 @@
       "outFiles": ["${workspaceFolder}/packages/extension/dist/**/*.cjs"]
     },
     {
-      "name": "Run Extension (VS Code Chat, Isolated + Trace Warnings)",
+      "name": "Run Extension (Vibe Chat, Isolated + Trace Warnings)",
       "type": "extensionHost",
       "request": "launch",
       "preLaunchTask": "Dev: All",

@@ -6,7 +6,7 @@ import { createExtensionTelemetry } from "./telemetry.js";
 import { DM_SECRET_STORAGE_KEY } from "./e2ee/dmCrypto.js";
 
 export function activate(context: vscode.ExtensionContext): void {
-  const output = vscode.window.createOutputChannel("VS Code Chat", { log: true });
+  const output = vscode.window.createOutputChannel("Vibe Chat", { log: true });
   const telemetry = createExtensionTelemetry({
     output,
     getBackendUrl: () => vscode.workspace.getConfiguration("vscodeChat").get<string>("backendUrl"),
@@ -46,11 +46,11 @@ export function activate(context: vscode.ExtensionContext): void {
         try {
           await context.secrets.delete(DM_SECRET_STORAGE_KEY);
           vscode.window.showInformationMessage(
-            "VS Code Chat: DM key cleared. Reconnect to publish a new key.",
+            "Vibe Chat: DM key cleared. Reconnect to publish a new key.",
           );
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          vscode.window.showErrorMessage(`VS Code Chat: Failed to clear DM key: ${message}`);
+          vscode.window.showErrorMessage(`Vibe Chat: Failed to clear DM key: ${message}`);
         }
       }),
     );
