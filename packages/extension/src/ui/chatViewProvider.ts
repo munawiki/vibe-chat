@@ -1,27 +1,38 @@
 import * as vscode from "vscode";
+import type { GithubUserId, ServerEvent } from "@vscode-chat/protocol";
 import { ChatClient } from "../net/chatClient.js";
-import type { PresenceSnapshot, ServerEvent } from "@vscode-chat/protocol";
-import { ChatViewModel, deriveChatViewModel } from "./viewModel.js";
-import { UiInboundSchema, type ExtOutbound } from "./webviewProtocol.js";
-import { GitHubLoginSchema } from "../contract/githubProfile.js";
+import { UiInboundSchema, type ExtOutbound } from "../contract/webviewProtocol.js";
 import { GitHubProfileService } from "../net/githubProfile.js";
-import { deriveUnreadBadge, initialChatUnreadState, reduceChatUnread } from "./unreadBadge.js";
+import { unknownErrorToMessage } from "./chatView/errors.js";
+import { openExternalHref, openGitHubProfileInBrowser } from "./chatView/external.js";
+import { renderChatWebviewHtml } from "./chatView/html.js";
+import { getBackendUrlFromConfig, isAutoConnectEnabledFromConfig } from "./chatView/config.js";
+import { fetchProfileMessage } from "./chatView/profile.js";
+import { ChatViewModeration } from "./chatView/moderation.js";
+import { ChatViewDirectMessages } from "./chatView/directMessages.js";
+import { ChatViewPresence } from "./chatView/presence.js";
+import { ChatViewUnread } from "./chatView/unread.js";
+import { deriveChatViewModel, type ChatViewModel } from "./viewModel.js";
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   static readonly viewType = "vscodeChat.chatView";
 
   private view: vscode.WebviewView | undefined;
   private uiReady = false;
-  private unread = initialChatUnreadState();
-  private presence: PresenceSnapshot | undefined;
+  private readonly unread = new ChatViewUnread();
+  private readonly presence = new ChatViewPresence();
+  private readonly moderation = new ChatViewModeration();
+  private readonly directMessages: ChatViewDirectMessages;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly githubProfiles: GitHubProfileService;
+  private serverEventChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly client: ChatClient,
     private readonly output: vscode.LogOutputChannel,
   ) {
+    this.directMessages = new ChatViewDirectMessages(this.context, this.output);
     this.githubProfiles = new GitHubProfileService({
       getAccessToken: async () => {
         try {
@@ -51,13 +62,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")],
     };
 
-    view.webview.html = this.html(view.webview);
+    view.webview.html = renderChatWebviewHtml({
+      webview: view.webview,
+      extensionUri: this.context.extensionUri,
+      extensionMode: this.context.extensionMode,
+    });
 
     this.disposables.push(
       this.client.onState((state) => {
-        if (state.status !== "connected") this.presence = undefined;
+        if (state.status !== "connected") {
+          this.presence.reset();
+          this.moderation.reset();
+          this.directMessages.reset();
+          this.serverEventChain = Promise.resolve();
+        } else {
+          void this.directMessages.ensureIdentityPublished(this.client, state).catch((err) => {
+            this.output.warn(`dm identity publish failed: ${String(err)}`);
+          });
+        }
         if (!this.uiReady) return;
-        const vm = deriveChatViewModel(state, this.backendUrl());
+        const vm = deriveChatViewModel(state, getBackendUrlFromConfig());
         this.postState(vm);
       }),
       this.client.onEvent((event) => this.onServerEvent(event)),
@@ -74,10 +98,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.client.disconnect();
     if (!this.uiReady) return;
     this.postStateSnapshot();
-    if (!vscode.workspace.getConfiguration("vscodeChat").get<boolean>("autoConnect", true)) return;
+    if (!isAutoConnectEnabledFromConfig()) return;
     this.client
       .connectIfSignedIn()
-      .catch((err) => this.postError(`reconnect failed: ${String(err)}`));
+      .catch((err) => this.postError(`reconnect failed: ${unknownErrorToMessage(err)}`));
   }
 
   private async onUiMessage(msg: unknown): Promise<void> {
@@ -92,11 +116,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.uiReady = true;
         await this.client.refreshAuthState().catch((err) => this.postError(String(err)));
         this.postStateSnapshot();
+        this.postMessage(this.directMessages.getStateMessage());
         this.postPresenceSnapshot();
-        if (vscode.workspace.getConfiguration("vscodeChat").get<boolean>("autoConnect", true)) {
+        this.postModerationSnapshot();
+        if (isAutoConnectEnabledFromConfig()) {
           await this.client
             .connectIfSignedIn()
-            .catch((err) => this.postError(`connect failed: ${String(err)}`));
+            .catch((err) => this.postError(`connect failed: ${unknownErrorToMessage(err)}`));
         }
         return;
       case "ui/signIn":
@@ -106,50 +132,179 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await this.client.connectIfSignedIn().catch((err) => this.postError(String(err)));
         return;
       case "ui/send":
-        this.client.sendMessage(parsed.data.text);
+        this.sendPlaintext(parsed.data.text);
+        return;
+      case "ui/dm.open": {
+        const err = this.directMessages.handleUiOpen(
+          parsed.data.peer,
+          this.client,
+          this.client.getState(),
+        );
+        if (err) this.postError(err);
+        return;
+      }
+      case "ui/dm.thread.select": {
+        const err = this.directMessages.handleUiThreadSelect(
+          parsed.data.dmId,
+          this.client,
+          this.client.getState(),
+        );
+        if (err) this.postError(err);
+        return;
+      }
+      case "ui/dm.send": {
+        const err = await this.directMessages.handleUiSend(
+          parsed.data.dmId,
+          parsed.data.text,
+          this.client,
+          this.client.getState(),
+        );
+        if (err) this.postError(err);
+        return;
+      }
+      case "ui/dm.peerKey.trust": {
+        const msg = await this.directMessages.handleUiTrustPeerKey(parsed.data.dmId);
+        if (msg) this.postMessage(msg);
+        return;
+      }
+      case "ui/link.open":
+        await this.onLinkOpen(parsed.data.href);
         return;
       case "ui/profile.open":
         await this.onProfileOpen(parsed.data.login);
         return;
       case "ui/profile.openOnGitHub":
-        await this.onProfileOpenOnGitHub(parsed.data.login);
+        await openGitHubProfileInBrowser(parsed.data.login);
+        return;
+      case "ui/moderation.user.deny":
+        this.onModerationAction("deny", parsed.data.targetGithubUserId);
+        return;
+      case "ui/moderation.user.allow":
+        this.onModerationAction("allow", parsed.data.targetGithubUserId);
         return;
     }
+  }
+
+  private onModerationAction(action: "deny" | "allow", targetGithubUserId: GithubUserId): void {
+    const result = this.moderation.handleUiAction(
+      action,
+      targetGithubUserId,
+      this.client.getState(),
+    );
+    this.postMessage(result.outbound);
+    if (!result.send) return;
+    if (result.send.action === "deny")
+      this.client.sendModerationDeny(result.send.targetGithubUserId);
+    else this.client.sendModerationAllow(result.send.targetGithubUserId);
+  }
+
+  private async onLinkOpen(href: string): Promise<void> {
+    const result = await openExternalHref(href);
+    if (!result.ok) this.postError(result.message);
   }
 
   private async onProfileOpen(login: string): Promise<void> {
-    try {
-      const profile = await this.githubProfiles.getProfile(login);
-      this.postMessage({ type: "ext/profile.result", login, profile });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "github_profile_unknown_error";
-      this.postMessage({ type: "ext/profile.error", login, message });
-    }
-  }
-
-  private async onProfileOpenOnGitHub(login: string): Promise<void> {
-    const parsed = GitHubLoginSchema.safeParse(login);
-    if (!parsed.success) return;
-
-    await vscode.env.openExternal(vscode.Uri.parse(`https://github.com/${parsed.data}`));
+    const message = await fetchProfileMessage(this.githubProfiles, login);
+    this.postMessage(message);
   }
 
   private onServerEvent(event: ServerEvent): void {
+    const job = (): void => {
+      this.handleServerEvent(event);
+    };
+
+    const next = this.serverEventChain.then(job, job).catch((err) => {
+      this.output.warn(`server event handler failed: ${String(err)}`);
+    });
+    this.serverEventChain = next;
+  }
+
+  private handleServerEvent(event: ServerEvent): void {
     switch (event.type) {
-      case "server/welcome":
+      case "server/welcome": {
         this.postMessage({ type: "ext/history", history: event.history });
         return;
-      case "server/message.new":
+      }
+
+      case "server/message.new": {
         this.onNewMessage();
         this.postMessage({ type: "ext/message", message: event.message });
         return;
-      case "server/presence":
-        this.presence = event.snapshot;
-        if (this.uiReady) this.postMessage({ type: "ext/presence", snapshot: event.snapshot });
+      }
+
+      case "server/dm.welcome": {
+        const dmWelcomeEvent = {
+          dmId: event.dmId,
+          peerGithubUserId: event.peerGithubUserId,
+          history: event.history,
+          ...(event.peerIdentity ? { peerIdentity: event.peerIdentity } : {}),
+        };
+        void this.directMessages
+          .handleServerWelcome({
+            event: dmWelcomeEvent,
+          })
+          .then((result) => {
+            if (!this.uiReady) return;
+            for (const msg of result.outbound) this.postMessage(msg);
+            if (result.history) this.postMessage(result.history);
+            if (result.error) this.postError(result.error);
+          });
         return;
-      case "server/error":
+      }
+
+      case "server/dm.message.new": {
+        void this.directMessages
+          .handleServerMessageNew({
+            event: { message: event.message },
+            clientState: this.client.getState(),
+          })
+          .then((result) => {
+            if (!this.uiReady) return;
+            for (const msg of result.outbound) this.postMessage(msg);
+            if (result.message) this.postMessage(result.message);
+            if (result.error) this.postError(result.error);
+          });
+        return;
+      }
+
+      case "server/presence": {
+        const msg = this.presence.handleServerSnapshot(event.snapshot);
+        if (this.uiReady) this.postMessage(msg);
+        return;
+      }
+
+      case "server/error": {
+        const moderation = this.moderation.handleServerError(event);
+        if (moderation) this.postMessage(moderation);
         this.postError(event.message ?? event.code);
         return;
+      }
+
+      case "server/moderation.snapshot": {
+        const msg = this.moderation.handleServerSnapshot(event);
+        if (this.uiReady) this.postMessage(msg);
+        return;
+      }
+
+      case "server/moderation.user.denied": {
+        const { userMessage, resolved } = this.moderation.handleServerUserDenied(
+          event,
+          this.client.getState(),
+        );
+        if (this.uiReady) this.postMessage(userMessage);
+        if (resolved) this.postMessage(resolved);
+        return;
+      }
+
+      case "server/moderation.user.allowed": {
+        const { userMessage, resolved } = this.moderation.handleServerUserAllowed(
+          event,
+          this.client.getState(),
+        );
+        if (this.uiReady) this.postMessage(userMessage);
+        if (resolved) this.postMessage(resolved);
+        return;
+      }
     }
   }
 
@@ -157,24 +312,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const view = this.view;
     if (!view) return;
 
-    this.unread = reduceChatUnread(this.unread, {
-      type: "server/message.new",
-      viewVisible: view.visible,
-    });
-
-    this.applyUnreadBadge();
+    this.unread.onServerMessageNew(view.visible);
+    this.unread.applyToView(view);
   }
 
   private onViewVisibilityChanged(): void {
     const view = this.view;
     if (!view) return;
 
-    this.unread = reduceChatUnread(this.unread, {
-      type: "view/visibility.changed",
-      visible: view.visible,
-    });
-
-    this.applyUnreadBadge();
+    this.unread.onViewVisibilityChanged(view.visible);
+    this.unread.applyToView(view);
   }
 
   private onViewDisposed(): void {
@@ -183,22 +330,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.uiReady = false;
   }
 
-  private applyUnreadBadge(): void {
-    const view = this.view;
-    if (!view) return;
-    const badge = deriveUnreadBadge(this.unread.unreadCount);
-    view.badge = badge;
-  }
-
   private postStateSnapshot(): void {
     const current = this.client.getState();
-    const vm = deriveChatViewModel(current, this.backendUrl());
+    const vm = deriveChatViewModel(current, getBackendUrlFromConfig());
     this.postState(vm);
   }
 
   private postPresenceSnapshot(): void {
-    if (!this.presence) return;
-    this.postMessage({ type: "ext/presence", snapshot: this.presence });
+    const msg = this.presence.getSnapshotMessage();
+    if (msg) this.postMessage(msg);
+  }
+
+  private postModerationSnapshot(): void {
+    const msg = this.moderation.getSnapshotMessage();
+    if (msg) this.postMessage(msg);
   }
 
   private postState(state: ChatViewModel): void {
@@ -214,102 +359,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     void this.view.webview.postMessage(message);
   }
 
-  private backendUrl(): string | undefined {
-    try {
-      return vscode.workspace.getConfiguration("vscodeChat").get<string>("backendUrl");
-    } catch {
-      return undefined;
-    }
+  private sendPlaintext(text: string): void {
+    const state = this.client.getState();
+    if (state.status !== "connected") return;
+    this.client.sendMessage(text);
   }
-
-  private html(webview: vscode.Webview): string {
-    const mediaRoot = vscode.Uri.joinPath(this.context.extensionUri, "media");
-    const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, "webview.css"));
-    const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, "webview.js"));
-    const nonce = randomNonce();
-
-    return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'none'; img-src https: data:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';"
-    />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="stylesheet" href="${cssUri.toString()}" />
-    <title>VS Code Chat</title>
-  </head>
-  <body>
-    <div class="container">
-      <div class="header">
-        <div class="status">
-          <div class="line1" id="status1">disconnected</div>
-          <div class="line2" id="status2"></div>
-          <button class="identityChip" id="btnIdentity" type="button" style="display: none">
-            <img class="identityAvatar" id="identityAvatar" alt="" />
-            <span class="identityLogin" id="identityLogin"></span>
-          </button>
-          <button
-            class="presenceButton"
-            id="btnPresence"
-            type="button"
-            style="display: none"
-            aria-expanded="false"
-            aria-controls="presencePanel"
-          >
-            Online: —
-          </button>
-        </div>
-        <div class="actions">
-          <button class="secondary" id="btnSignIn">Sign in with GitHub</button>
-          <button class="secondary" id="btnReconnect" style="display: none">Connect</button>
-        </div>
-      </div>
-      <div class="messages" id="messages"></div>
-      <div class="composer">
-        <input id="input" type="text" maxlength="500" placeholder="Type a message…" disabled />
-        <button id="btnSend" disabled>Send</button>
-      </div>
-      <div class="error" id="error"></div>
-    </div>
-    <div class="profileOverlay" id="profileOverlay" style="display: none">
-      <div class="profileCard" id="profileCard" role="dialog" aria-modal="true" aria-label="GitHub Profile">
-        <div class="profileHeader">
-          <img class="profileAvatar" id="profileAvatar" alt="" />
-          <div class="profileTitle">
-            <div class="profileName" id="profileName"></div>
-            <div class="profileLogin" id="profileLogin"></div>
-          </div>
-          <button class="profileClose" id="profileClose" aria-label="Close">×</button>
-        </div>
-        <div class="profileBody" id="profileBody"></div>
-        <div class="profileFooter">
-          <button class="secondary" id="profileOpenOnGitHub">Open on GitHub</button>
-        </div>
-        <div class="profileError" id="profileError" style="display: none"></div>
-      </div>
-    </div>
-    <div class="presenceOverlay" id="presenceOverlay" style="display: none">
-      <div class="presenceCard" id="presenceCard" role="dialog" aria-modal="true" aria-label="Online users">
-        <div class="presenceHeader">
-          <div class="presenceTitle">Online users</div>
-          <button class="presenceClose" id="presenceClose" aria-label="Close">×</button>
-        </div>
-        <div class="presencePanel" id="presencePanel" role="list"></div>
-      </div>
-    </div>
-    <script nonce="${nonce}" src="${jsUri.toString()}"></script>
-  </body>
-</html>`;
-  }
-}
-
-function randomNonce(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let out = "";
-  for (let i = 0; i < 32; i += 1) {
-    out += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return out;
 }

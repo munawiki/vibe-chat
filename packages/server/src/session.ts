@@ -1,5 +1,6 @@
 import { SignJWT, jwtVerify } from "jose";
 import { z } from "zod";
+import { GithubUserIdSchema, type GithubUserId } from "@vscode-chat/protocol";
 
 const GithubUserSchema = z.object({
   id: z.number().int().positive(),
@@ -10,7 +11,7 @@ const GithubUserSchema = z.object({
 type GithubUser = z.infer<typeof GithubUserSchema>;
 
 const SessionTokenPayloadSchema = z.object({
-  sub: z.string().min(1),
+  sub: GithubUserIdSchema,
   login: z.string().min(1),
   avatarUrl: z.string().url(),
 });
@@ -23,11 +24,12 @@ export async function exchangeGithubTokenForSession(
 ): Promise<{
   token: string;
   expiresAt: string;
-  user: { githubUserId: string; login: string; avatarUrl: string };
+  user: { githubUserId: GithubUserId; login: string; avatarUrl: string };
 }> {
   const githubUser = await fetchGithubUser(accessToken);
+  const githubUserId = GithubUserIdSchema.parse(String(githubUser.id));
   const user = {
-    githubUserId: String(githubUser.id),
+    githubUserId,
     login: githubUser.login,
     avatarUrl: githubUser.avatar_url,
   };
@@ -41,7 +43,7 @@ export async function exchangeGithubTokenForSession(
 export async function verifySessionToken(
   token: string,
   env: { SESSION_SECRET: string },
-): Promise<{ githubUserId: string; login: string; avatarUrl: string }> {
+): Promise<{ githubUserId: GithubUserId; login: string; avatarUrl: string }> {
   const secretKey = secret(env.SESSION_SECRET);
   const { payload } = await jwtVerify(token, secretKey, { algorithms: ["HS256"] });
 
@@ -55,7 +57,7 @@ export async function verifySessionToken(
 }
 
 async function createSessionToken(
-  user: { githubUserId: string; login: string; avatarUrl: string },
+  user: { githubUserId: GithubUserId; login: string; avatarUrl: string },
   env: { SESSION_SECRET: string },
 ): Promise<string> {
   const secretKey = secret(env.SESSION_SECRET);

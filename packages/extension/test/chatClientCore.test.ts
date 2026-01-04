@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { AuthUserSchema } from "@vscode-chat/protocol";
 import {
   computeReconnectDelayMs,
   initialChatClientCoreState,
@@ -6,7 +7,50 @@ import {
   type ChatClientCoreState,
 } from "../src/core/chatClientCore.js";
 
-const user = { githubUserId: "123", login: "octocat", avatarUrl: "https://example.com/a.png" };
+const user = AuthUserSchema.parse({
+  githubUserId: "123",
+  login: "octocat",
+  avatarUrl: "https://example.com/a.png",
+  roles: [],
+});
+
+const handshake429ConnectTelemetry = {
+  type: "cmd/telemetry.send",
+  event: {
+    name: "vscodeChat.ws.connect",
+    outcome: "handshake_http_error",
+    httpStatus: 429,
+    usedCachedSession: false,
+    recovered: false,
+  },
+} as const;
+
+function makeReconnectHandshakePendingState(options: {
+  reconnectAttempt: number;
+}): ChatClientCoreState {
+  return {
+    ...initialChatClientCoreState(),
+    publicState: {
+      authStatus: "signedIn",
+      status: "connecting",
+      backendUrl: "http://127.0.0.1:8787",
+      user,
+    },
+    reconnectAttempt: options.reconnectAttempt,
+    reconnectScheduled: false,
+    pending: {
+      type: "pending/connect.ws",
+      origin: "reconnect",
+      backendUrl: "http://127.0.0.1:8787",
+      githubAccountId: "acct",
+      accessToken: "gh-token",
+      token: "backend-token",
+      user,
+      usedCachedSession: false,
+      recovered: false,
+    },
+  };
+}
 
 describe("chatClientCore", () => {
   it("reuses cached session when valid", () => {
@@ -135,5 +179,79 @@ describe("chatClientCore", () => {
       },
       { type: "cmd/reconnect.schedule", delayMs: 500 },
     ]);
+  });
+
+  it.each([
+    {
+      name: "clamps reconnect delay to Retry-After when handshake is 429",
+      reconnectAttempt: 0,
+      error: { type: "handshake_http_error", status: 429, retryAfterMs: 10_000 },
+      expectedReconnectAttempt: 1,
+      expectedCommands: [
+        handshake429ConnectTelemetry,
+        {
+          type: "cmd/telemetry.send",
+          event: { name: "vscodeChat.ws.reconnect_scheduled", attempt: 0, delayMs: 10_000 },
+        },
+        { type: "cmd/reconnect.schedule", delayMs: 10_000 },
+      ],
+    },
+    {
+      name: "stops auto-reconnect on capacity 429 (structured code)",
+      reconnectAttempt: 3,
+      error: {
+        type: "handshake_http_error",
+        status: 429,
+        handshakeRejection: { code: "too_many_connections", message: "Too many connections" },
+      },
+      expectedReconnectAttempt: 3,
+      expectedCommands: [handshake429ConnectTelemetry, { type: "cmd/reconnect.cancel" }],
+    },
+    {
+      name: "falls back to substring classification for legacy 429 bodies",
+      reconnectAttempt: 3,
+      error: { type: "handshake_http_error", status: 429, bodyText: "Too many connections" },
+      expectedReconnectAttempt: 3,
+      expectedCommands: [handshake429ConnectTelemetry, { type: "cmd/reconnect.cancel" }],
+    },
+  ])(
+    "$name (reconnect origin)",
+    ({ reconnectAttempt, error, expectedReconnectAttempt, expectedCommands }) => {
+      const s0 = makeReconnectHandshakePendingState({ reconnectAttempt });
+
+      const { state: s1, commands } = reduceChatClientCore(s0, {
+        type: "ws/open.result",
+        ok: false,
+        error,
+      });
+
+      expect(s1.publicState.status).toBe("disconnected");
+      expect(s1.pending).toBeUndefined();
+      expect(s1.reconnectAttempt).toBe(expectedReconnectAttempt);
+      expect(s1.reconnectScheduled).toBe(true);
+      expect(commands).toEqual(expectedCommands);
+    },
+  );
+
+  it("updates connected identity from server welcome (authoritative roles)", () => {
+    const s0: ChatClientCoreState = {
+      ...initialChatClientCoreState(),
+      publicState: {
+        authStatus: "signedIn",
+        status: "connected",
+        backendUrl: "http://127.0.0.1:8787",
+        user,
+      },
+      cachedSession: { githubAccountId: "acct", token: "t", expiresAtMs: 120_000, user },
+      githubAccountId: "acct",
+    };
+
+    const welcomeUser = AuthUserSchema.parse({ ...user, roles: ["moderator"] });
+    const { state: s1 } = reduceChatClientCore(s0, { type: "ws/welcome", user: welcomeUser });
+
+    expect(s1.publicState.status).toBe("connected");
+    expect(s1.publicState.authStatus).toBe("signedIn");
+    expect(s1.publicState.user.roles).toEqual(["moderator"]);
+    expect(s1.cachedSession?.user.roles).toEqual(["moderator"]);
   });
 });

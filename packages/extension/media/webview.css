@@ -10,14 +10,37 @@ body {
   background: var(--vscode-editor-background);
 }
 
+[hidden] {
+  display: none !important;
+}
+
 .muted {
   opacity: 0.75;
   font-size: 12px;
 }
 
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--vscode-editorWidget-background);
+  color: var(--vscode-foreground);
+}
+
+.badge.mod {
+  border-color: var(--vscode-textLink-foreground);
+  color: var(--vscode-textLink-foreground);
+}
+
 .container {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto auto 1fr auto auto;
   height: 100vh;
 }
 
@@ -28,25 +51,100 @@ body {
   gap: 8px;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
 }
 
-.status {
+.headerLeft {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
 }
 
-.status .line1 {
+.headerRight {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.connButton {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
   font-weight: 600;
+  font-size: 12px;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--vscode-foreground);
+  padding: 0;
+  border-radius: 6px;
 }
 
-.status .line2 {
-  opacity: 0.75;
-  font-size: 12px;
+.connButton:not(:disabled) {
+  cursor: pointer;
+}
+
+.connButton:disabled {
+  cursor: default;
+  opacity: 0.9;
+}
+
+.connButton:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.connDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--vscode-editorWidget-border);
+  opacity: 0.9;
+  flex-shrink: 0;
+}
+
+.connText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connButton[data-conn-status="connected"] .connDot {
+  background: var(--vscode-terminal-ansiGreen, #2ea043);
+  animation: connPulse 1.6s ease-in-out infinite;
+}
+
+.connButton[data-conn-status="connecting"] .connDot {
+  background: var(--vscode-terminal-ansiYellow, #d29922);
+}
+
+.connButton[data-conn-status="disconnected"] .connDot {
+  background: var(--vscode-terminal-ansiRed, #f85149);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connDot {
+    animation: none !important;
+  }
+}
+
+@keyframes connPulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 .identityChip {
-  align-self: flex-start;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -57,6 +155,8 @@ body {
   border-radius: 999px;
   cursor: pointer;
   font-size: 12px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .identityChip:focus-visible {
@@ -73,26 +173,14 @@ body {
 
 .identityLogin {
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .identityChip:hover .identityLogin {
   text-decoration: underline;
-}
-
-.presenceButton {
-  align-self: flex-start;
-  border: none;
-  background: transparent;
-  color: var(--vscode-textLink-foreground);
-  padding: 0;
-  margin-top: 4px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.presenceButton:disabled {
-  opacity: 0.6;
-  cursor: default;
 }
 
 .presencePanel {
@@ -112,6 +200,13 @@ body {
   align-items: center;
 }
 
+.presenceLabel {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
 .presenceAvatar {
   width: 18px;
   height: 18px;
@@ -122,11 +217,26 @@ body {
 .presenceLogin {
   font-weight: 600;
   font-size: 12px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-textLink-foreground);
+  padding: 0;
+  border-radius: 4px;
+  text-align: left;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .presenceAvatar.clickable,
 .presenceLogin.clickable {
   cursor: pointer;
+}
+
+.presenceLogin:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
 }
 
 .presenceLogin.clickable:hover {
@@ -140,6 +250,96 @@ body {
 .actions {
   display: flex;
   gap: 8px;
+}
+
+.channelTabs {
+  padding: 6px 12px 8px;
+  border-bottom: 1px solid var(--vscode-editorWidget-border);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.channelTabs .tab {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--vscode-foreground);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.channelTabs .tab.active {
+  border-color: var(--vscode-editorWidget-border);
+  background: var(--vscode-editorWidget-background);
+}
+
+.channelTabs .tab:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.dmPanel {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--vscode-editorWidget-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dmThreads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dmThread {
+  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--vscode-editorWidget-background);
+  color: var(--vscode-foreground);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dmThread.active {
+  border-color: var(--vscode-textLink-foreground);
+}
+
+.dmThread.blocked {
+  border-color: var(--vscode-inputValidation-warningBorder, var(--vscode-editorWidget-border));
+  color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground));
+}
+
+.dmWarning {
+  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-editorWidget-border));
+  background: var(
+    --vscode-inputValidation-warningBackground,
+    var(--vscode-editorWidget-background)
+  );
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.dmWarningText {
+  font-size: 12px;
+  min-width: 0;
+}
+
+.dmEmpty {
+  font-size: 12px;
 }
 
 button {
@@ -157,9 +357,24 @@ button.secondary {
   border-color: var(--vscode-textLink-foreground);
 }
 
+button.danger {
+  background: var(--vscode-errorForeground);
+  border-color: var(--vscode-errorForeground);
+  color: var(--vscode-editor-background);
+}
+
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+#btnSend:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+}
+
+#btnSend:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
 }
 
 .messages {
@@ -209,10 +424,19 @@ button:disabled {
   display: flex;
   gap: 8px;
   align-items: baseline;
+  min-width: 0;
+}
+
+.msg .meta .badge {
+  margin-top: 1px;
 }
 
 .msg .login {
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .msg.own .login {
@@ -224,6 +448,7 @@ button:disabled {
 }
 
 .msg .time {
+  flex-shrink: 0;
   opacity: 0.7;
   font-size: 12px;
 }
@@ -234,6 +459,90 @@ button:disabled {
   word-break: break-word;
   display: inline-block;
   max-width: min(70ch, 100%);
+}
+
+.msg .text .msgLink {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: underline;
+}
+
+.msg .text .msgLink:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.msg .text .msgCode {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editorWidget-background));
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size, 12px);
+  line-height: var(--vscode-editor-line-height, 18px);
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.msg .text .msgCode code {
+  font-family: inherit;
+  display: block;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+.msg .text .msgCode [class^="shj-syn-"] {
+  background: transparent;
+}
+
+.msg .text .msgCode .shj-syn-cmnt {
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  font-style: italic;
+}
+
+.msg .text .msgCode .shj-syn-kwd,
+.msg .text .msgCode .shj-syn-section {
+  color: var(--vscode-terminal-ansiMagenta, var(--vscode-textLink-foreground));
+  font-weight: 600;
+}
+
+.msg .text .msgCode .shj-syn-str,
+.msg .text .msgCode .shj-syn-insert {
+  color: var(--vscode-terminal-ansiGreen, var(--vscode-textLink-foreground));
+}
+
+.msg .text .msgCode .shj-syn-num,
+.msg .text .msgCode .shj-syn-class {
+  color: var(--vscode-terminal-ansiYellow, var(--vscode-textLink-foreground));
+}
+
+.msg .text .msgCode .shj-syn-bool,
+.msg .text .msgCode .shj-syn-type {
+  color: var(--vscode-terminal-ansiBlue, var(--vscode-textLink-foreground));
+}
+
+.msg .text .msgCode .shj-syn-func {
+  color: var(--vscode-terminal-ansiCyan, var(--vscode-textLink-foreground));
+}
+
+.msg .text .msgCode .shj-syn-oper,
+.msg .text .msgCode .shj-syn-var,
+.msg .text .msgCode .shj-syn-esc {
+  color: var(
+    --vscode-terminal-ansiBrightWhite,
+    var(--vscode-editor-foreground, var(--vscode-foreground))
+  );
+}
+
+.msg .text .msgCode .shj-syn-err {
+  color: var(--vscode-errorForeground);
+}
+
+.msg .text .msgCode .shj-syn-deleted {
+  color: var(--vscode-terminal-ansiRed, var(--vscode-errorForeground));
 }
 
 .avatar.clickable,
@@ -251,15 +560,33 @@ button:disabled {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 8px;
+  align-items: stretch;
 }
 
-input[type="text"] {
+#input {
   width: 100%;
   border: 1px solid var(--vscode-input-border);
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border-radius: 6px;
   padding: 8px 10px;
+  resize: none;
+  min-height: 36px;
+  max-height: 140px;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: var(--vscode-editor-line-height, 18px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+#btnSend {
+  min-width: 72px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
 }
 
 .error {
@@ -392,7 +719,18 @@ input[type="text"] {
 .profileFooter {
   margin-top: 12px;
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.profileActions {
+  display: flex;
+  gap: 8px;
+}
+
+.profileModStatus {
+  margin-top: 8px;
 }
 
 .profileError {

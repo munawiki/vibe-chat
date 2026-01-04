@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { GithubUserIdSchema } from "@vscode-chat/protocol";
 import {
   GitHubLoginSchema,
   GitHubProfileMetaSchema,
@@ -38,6 +39,35 @@ export type GitHubProfileServiceOptions = {
   userAgent?: string;
 };
 
+export type GitHubProfileError =
+  | { type: "invalid_login" }
+  | { type: "fetch_failed"; status: number }
+  | { type: "invalid_json" }
+  | { type: "schema_mismatch" }
+  | { type: "network_error"; cause: unknown };
+
+export type GitHubProfileResult =
+  | { ok: true; profile: GitHubProfile }
+  | { ok: false; error: GitHubProfileError };
+
+export function githubProfileErrorToMessage(error: GitHubProfileError): string {
+  switch (error.type) {
+    case "invalid_login":
+      return "github_profile_invalid_login";
+    case "fetch_failed":
+      return `github_profile_fetch_failed_${error.status}`;
+    case "invalid_json":
+      return "github_profile_invalid_json";
+    case "schema_mismatch":
+      return "github_profile_schema_mismatch";
+    case "network_error": {
+      const msg = error.cause instanceof Error ? error.cause.message : String(error.cause);
+      const trimmed = msg.trim();
+      return trimmed.length > 0 ? trimmed : "github_profile_network_error";
+    }
+  }
+}
+
 export class GitHubProfileService {
   private readonly ttlMs: number;
   private readonly fetchImpl: typeof fetch;
@@ -46,7 +76,7 @@ export class GitHubProfileService {
   private readonly userAgent: string;
 
   private readonly cache = new Map<string, { profile: GitHubProfile; fetchedAtMs: number }>();
-  private readonly inFlight = new Map<string, Promise<GitHubProfile>>();
+  private readonly inFlight = new Map<string, Promise<GitHubProfileResult>>();
 
   constructor(options: GitHubProfileServiceOptions = {}) {
     this.ttlMs = options.ttlMs ?? 15 * 60 * 1000;
@@ -56,16 +86,16 @@ export class GitHubProfileService {
     this.userAgent = options.userAgent ?? "vscode-chat-extension";
   }
 
-  async getProfile(login: string): Promise<GitHubProfile> {
+  async getProfile(login: string): Promise<GitHubProfileResult> {
     const parsedLogin = GitHubLoginSchema.safeParse(login);
     if (!parsedLogin.success) {
-      throw new Error("github_profile_invalid_login");
+      return { ok: false, error: { type: "invalid_login" } };
     }
 
     const key = parsedLogin.data.toLowerCase();
     const cached = this.cache.get(key);
     if (cached && this.nowMs() - cached.fetchedAtMs <= this.ttlMs) {
-      return cached.profile;
+      return { ok: true, profile: cached.profile };
     }
 
     const existing = this.inFlight.get(key);
@@ -78,17 +108,19 @@ export class GitHubProfileService {
     return promise;
   }
 
-  private async fetchAndCache(login: string): Promise<GitHubProfile> {
+  private async fetchAndCache(login: string): Promise<GitHubProfileResult> {
     const token = await this.getAccessToken().catch(() => undefined);
-    const profile = await fetchGitHubProfile({
+    const result = await fetchGitHubProfile({
       fetchImpl: this.fetchImpl,
       login,
       accessToken: token,
       userAgent: this.userAgent,
     });
 
-    this.cache.set(login, { profile, fetchedAtMs: this.nowMs() });
-    return profile;
+    if (result.ok) {
+      this.cache.set(login, { profile: result.profile, fetchedAtMs: this.nowMs() });
+    }
+    return result;
   }
 }
 
@@ -97,7 +129,7 @@ async function fetchGitHubProfile(options: {
   login: string;
   accessToken: string | undefined;
   userAgent: string;
-}): Promise<GitHubProfile> {
+}): Promise<GitHubProfileResult> {
   const url = `https://api.github.com/users/${encodeURIComponent(options.login)}`;
   const headers: Record<string, string> = {
     accept: "application/vnd.github+json",
@@ -106,43 +138,51 @@ async function fetchGitHubProfile(options: {
   };
   if (options.accessToken) headers.authorization = `Bearer ${options.accessToken}`;
 
-  const response = await options.fetchImpl(url, { headers });
-  if (!response.ok) {
-    throw new Error(`github_profile_fetch_failed_${response.status}`);
+  let response: Response;
+  try {
+    response = await options.fetchImpl(url, { headers });
+  } catch (cause: unknown) {
+    return { ok: false, error: { type: "network_error", cause } };
   }
+
+  if (!response.ok) return { ok: false, error: { type: "fetch_failed", status: response.status } };
 
   let json: unknown;
   try {
     json = await response.json();
   } catch {
-    throw new Error("github_profile_invalid_json");
+    return { ok: false, error: { type: "invalid_json" } };
   }
 
   const parsed = GitHubUserApiResponseSchema.safeParse(json);
   if (!parsed.success) {
-    throw new Error("github_profile_schema_mismatch");
+    return { ok: false, error: { type: "schema_mismatch" } };
   }
 
   const api = parsed.data;
+  const githubUserId = GithubUserIdSchema.parse(String(api.id));
   const base: GitHubProfile = {
     login: api.login,
-    githubUserId: String(api.id),
+    githubUserId,
     avatarUrl: api.avatar_url,
     htmlUrl: api.html_url,
   };
 
   return {
-    ...base,
-    ...(api.name !== undefined ? { name: api.name } : {}),
-    ...(api.bio !== undefined ? { bio: api.bio } : {}),
-    ...(api.company !== undefined ? { company: api.company } : {}),
-    ...(api.location !== undefined ? { location: api.location } : {}),
-    ...(api.blog !== undefined ? { blog: api.blog } : {}),
-    ...(api.twitter_username !== undefined ? { twitterUsername: api.twitter_username } : {}),
-    ...(api.public_repos !== undefined ? { publicRepos: api.public_repos } : {}),
-    ...(api.followers !== undefined ? { followers: api.followers } : {}),
-    ...(api.following !== undefined ? { following: api.following } : {}),
-    ...(api.created_at !== undefined ? { createdAt: api.created_at } : {}),
-    ...(api.updated_at !== undefined ? { updatedAt: api.updated_at } : {}),
+    ok: true,
+    profile: {
+      ...base,
+      ...(api.name !== undefined ? { name: api.name } : {}),
+      ...(api.bio !== undefined ? { bio: api.bio } : {}),
+      ...(api.company !== undefined ? { company: api.company } : {}),
+      ...(api.location !== undefined ? { location: api.location } : {}),
+      ...(api.blog !== undefined ? { blog: api.blog } : {}),
+      ...(api.twitter_username !== undefined ? { twitterUsername: api.twitter_username } : {}),
+      ...(api.public_repos !== undefined ? { publicRepos: api.public_repos } : {}),
+      ...(api.followers !== undefined ? { followers: api.followers } : {}),
+      ...(api.following !== undefined ? { following: api.following } : {}),
+      ...(api.created_at !== undefined ? { createdAt: api.created_at } : {}),
+      ...(api.updated_at !== undefined ? { updatedAt: api.updated_at } : {}),
+    },
   };
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { AuthUserSchema } from "@vscode-chat/protocol";
 import { deriveChatViewModel } from "../src/ui/viewModel.js";
 
 describe("deriveChatViewModel", () => {
@@ -28,11 +29,17 @@ describe("deriveChatViewModel", () => {
   });
 
   it("hides actions when connected", () => {
+    const user = AuthUserSchema.parse({
+      githubUserId: "123",
+      login: "octocat",
+      avatarUrl: "https://example.com/a.png",
+      roles: [],
+    });
     const vm = deriveChatViewModel({
       authStatus: "signedIn",
       status: "connected",
       backendUrl: "http://127.0.0.1:8787",
-      user: { githubUserId: "123", login: "octocat", avatarUrl: "https://example.com/a.png" },
+      user,
     });
 
     expect(vm.actions.signIn.visible).toBe(false);

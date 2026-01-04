@@ -1,7 +1,13 @@
 import * as vscode from "vscode";
 import WebSocket from "ws";
 import { ClientEventSchema, PROTOCOL_VERSION, ServerEventSchema } from "@vscode-chat/protocol";
-import type { ClientEvent, ServerEvent } from "@vscode-chat/protocol";
+import type {
+  ClientEvent,
+  DmId,
+  DmIdentity,
+  GithubUserId,
+  ServerEvent,
+} from "@vscode-chat/protocol";
 import type { ExtensionTelemetry } from "../telemetry.js";
 import { getGitHubSession, onDidChangeGitHubSessions } from "../adapters/vscodeAuth.js";
 import { autoConnectEnabled, getBackendUrl } from "../adapters/vscodeConfig.js";
@@ -115,7 +121,73 @@ export class ChatClient implements vscode.Disposable {
   }
 
   sendMessage(text: string): void {
-    const payload: ClientEvent = { version: PROTOCOL_VERSION, type: "client/message.send", text };
+    const payload: ClientEvent = {
+      version: PROTOCOL_VERSION,
+      type: "client/message.send",
+      text,
+    };
+    this.sendEvent(payload);
+  }
+
+  sendModerationDeny(targetGithubUserId: GithubUserId, reason?: string): void {
+    const payload: ClientEvent = {
+      version: PROTOCOL_VERSION,
+      type: "client/moderation.user.deny",
+      targetGithubUserId,
+      ...(typeof reason === "string" && reason.trim().length > 0 ? { reason } : {}),
+    };
+    this.sendEvent(payload);
+  }
+
+  sendModerationAllow(targetGithubUserId: GithubUserId): void {
+    const payload: ClientEvent = {
+      version: PROTOCOL_VERSION,
+      type: "client/moderation.user.allow",
+      targetGithubUserId,
+    };
+    this.sendEvent(payload);
+  }
+
+  publishDmIdentity(identity: DmIdentity): void {
+    const payload: ClientEvent = {
+      version: PROTOCOL_VERSION,
+      type: "client/dm.identity.publish",
+      identity,
+    };
+    this.sendEvent(payload);
+  }
+
+  openDm(targetGithubUserId: GithubUserId): void {
+    const payload: ClientEvent = {
+      version: PROTOCOL_VERSION,
+      type: "client/dm.open",
+      targetGithubUserId,
+    };
+    this.sendEvent(payload);
+  }
+
+  sendDmMessage(options: {
+    dmId: DmId;
+    recipientGithubUserId: GithubUserId;
+    senderIdentity: DmIdentity;
+    recipientIdentity: DmIdentity;
+    nonce: string;
+    ciphertext: string;
+  }): void {
+    const payload: ClientEvent = {
+      version: PROTOCOL_VERSION,
+      type: "client/dm.message.send",
+      dmId: options.dmId,
+      recipientGithubUserId: options.recipientGithubUserId,
+      senderIdentity: options.senderIdentity,
+      recipientIdentity: options.recipientIdentity,
+      nonce: options.nonce,
+      ciphertext: options.ciphertext,
+    };
+    this.sendEvent(payload);
+  }
+
+  private sendEvent(payload: ClientEvent): void {
     const parsed = ClientEventSchema.safeParse(payload);
     if (!parsed.success) {
       this.output.warn("Rejected client payload by schema.");
@@ -197,10 +269,22 @@ export class ChatClient implements vscode.Disposable {
         });
 
         if (!result.ok) {
+          if (result.error.type === "handshake_http_error") {
+            const parts = [`HTTP ${result.error.status}`];
+            if (typeof result.error.retryAfterMs === "number") {
+              parts.push(`retryAfterMs=${result.error.retryAfterMs}`);
+            }
+            if (typeof result.error.bodyText === "string" && result.error.bodyText.length > 0) {
+              const preview = result.error.bodyText.replaceAll(/\s+/g, " ").slice(0, 200);
+              parts.push(`body="${preview}"`);
+            }
+            this.output.warn(`WebSocket handshake failed: ${parts.join(" ")}`);
+          }
           return { type: "ws/open.result", ok: false, error: result.error, cause: result.cause };
         }
 
         this.ws = result.ws;
+
         try {
           result.ws.send(
             JSON.stringify({
@@ -293,6 +377,12 @@ export class ChatClient implements vscode.Disposable {
     if (!parsed.success) {
       this.output.warn("Invalid server event schema.");
       return;
+    }
+
+    if (parsed.data.type === "server/welcome") {
+      this.run({ type: "ws/welcome", user: parsed.data.user }).catch((err) => {
+        this.output.warn(`ws/welcome handler failed: ${String(err)}`);
+      });
     }
 
     for (const listener of this.messageListeners) listener(parsed.data);

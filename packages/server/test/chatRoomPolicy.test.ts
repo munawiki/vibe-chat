@@ -1,10 +1,29 @@
 import { describe, expect, it } from "vitest";
+import { AuthUserSchema } from "@vscode-chat/protocol";
 import {
   appendHistory,
-  createChatMessage,
+  createChatMessagePlain,
   nextHistoryPersistence,
   nextFixedWindowRateLimit,
 } from "../src/policy/chatRoomPolicy.js";
+
+function makeUser() {
+  return AuthUserSchema.parse({
+    githubUserId: "123",
+    login: "octocat",
+    avatarUrl: "https://example.com/a.png",
+    roles: [],
+  });
+}
+
+function makeMessage(user: ReturnType<typeof makeUser>, id: string) {
+  return createChatMessagePlain({
+    id,
+    user,
+    text: "hello",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  });
+}
 
 describe("chatRoomPolicy", () => {
   it("enforces fixed window rate limits deterministically", () => {
@@ -29,14 +48,10 @@ describe("chatRoomPolicy", () => {
   });
 
   it("appends history and trims to limit", () => {
-    const m1 = createChatMessage({
-      id: "1",
-      user: { githubUserId: "123", login: "octocat", avatarUrl: "https://example.com/a.png" },
-      text: "hi",
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
-    const m2 = { ...m1, id: "2" };
-    const m3 = { ...m1, id: "3" };
+    const user = makeUser();
+    const m1 = makeMessage(user, "1");
+    const m2 = makeMessage(user, "2");
+    const m3 = makeMessage(user, "3");
 
     const h1 = appendHistory([], m1, 2);
     expect(h1).toEqual([m1]);
@@ -49,12 +64,8 @@ describe("chatRoomPolicy", () => {
   });
 
   it("returns empty history when limit is 0", () => {
-    const m1 = createChatMessage({
-      id: "1",
-      user: { githubUserId: "123", login: "octocat", avatarUrl: "https://example.com/a.png" },
-      text: "hi",
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
+    const user = makeUser();
+    const m1 = makeMessage(user, "1");
 
     expect(appendHistory([], m1, 0)).toEqual([]);
   });

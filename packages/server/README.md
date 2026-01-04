@@ -15,14 +15,6 @@ Backend-only (from this folder):
 2. Set `SESSION_SECRET` (>= 32 characters)
 3. `pnpm dev`
 
-## Deploy
-
-From the repo root:
-
-1. `pnpm --filter @vscode-chat/server exec wrangler login`
-2. `pnpm --filter @vscode-chat/server exec wrangler secret put SESSION_SECRET`
-3. `pnpm --filter @vscode-chat/server deploy`
-
 ## Configuration
 
 Optional environment variables allow bounding resource usage and cost:
@@ -34,4 +26,18 @@ Optional environment variables allow bounding resource usage and cost:
 - `CHAT_HISTORY_LIMIT` (recent message history size)
 - `CHAT_HISTORY_PERSIST_EVERY_N_MESSAGES` (history persistence frequency)
 
-See `.dev.vars.example` and `RUNBOOK.md` for recommended defaults and operational guidance.
+Optional environment variables allow minimal abuse controls:
+
+- `DENY_GITHUB_USER_IDS` (comma-separated GitHub numeric user ids denied at the WebSocket boundary)
+- `MODERATOR_GITHUB_USER_IDS` (comma-separated GitHub numeric user ids granted the `moderator` role)
+
+Optional environment variables allow enforcing a denylist-based content policy:
+
+- `CHAT_CONTENT_FILTER_MODE` (`off` | `reject`)
+- `CHAT_CONTENT_FILTER_LANGUAGES` (comma/newline-separated language codes, or `all`)
+- `CHAT_CONTENT_DENYLIST` (comma/newline-separated extra terms)
+- `CHAT_CONTENT_ALLOWLIST` (comma/newline-separated allowlist terms)
+
+See `.dev.vars.example` for recommended defaults and operational guidance.
+
+

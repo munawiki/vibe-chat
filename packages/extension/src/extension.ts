@@ -3,6 +3,7 @@ import { ChatClient } from "./net/chatClient.js";
 import { ChatViewProvider } from "./ui/chatViewProvider.js";
 import { ChatStatusBar } from "./ui/chatStatusBar.js";
 import { createExtensionTelemetry } from "./telemetry.js";
+import { DM_SECRET_STORAGE_KEY } from "./e2ee/dmCrypto.js";
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("VS Code Chat", { log: true });
@@ -38,6 +39,22 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
   );
+
+  if (context.extensionMode === vscode.ExtensionMode.Development) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand("vscodeChat.dev.rotateDmKey", async () => {
+        try {
+          await context.secrets.delete(DM_SECRET_STORAGE_KEY);
+          vscode.window.showInformationMessage(
+            "VS Code Chat: DM key cleared. Reconnect to publish a new key.",
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          vscode.window.showErrorMessage(`VS Code Chat: Failed to clear DM key: ${message}`);
+        }
+      }),
+    );
+  }
 }
 
 export function deactivate(): void {}

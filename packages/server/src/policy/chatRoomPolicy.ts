@@ -1,4 +1,4 @@
-import type { ChatMessage } from "@vscode-chat/protocol";
+import type { ChatMessagePlain } from "@vscode-chat/protocol";
 import type { RateWindow } from "../util.js";
 
 export type RateLimitDecision =
@@ -27,11 +27,7 @@ export function nextFixedWindowRateLimit(
   };
 }
 
-export function appendHistory(
-  history: ChatMessage[],
-  message: ChatMessage,
-  limit: number,
-): ChatMessage[] {
+export function appendHistory<T>(history: ReadonlyArray<T>, message: T, limit: number): T[] {
   if (limit <= 0) return [];
   return [...history, message].slice(-limit);
 }
@@ -47,11 +43,16 @@ export function nextHistoryPersistence(
   return { shouldPersist: false, nextPendingCount };
 }
 
-export function createChatMessage(options: {
+export function createChatMessagePlain(options: {
   id: string;
-  user: ChatMessage["user"];
+  user: ChatMessagePlain["user"];
   text: string;
   createdAt: string;
-}): ChatMessage {
-  return { id: options.id, user: options.user, text: options.text, createdAt: options.createdAt };
+}): ChatMessagePlain {
+  return {
+    id: options.id,
+    user: options.user,
+    text: options.text,
+    createdAt: options.createdAt,
+  };
 }

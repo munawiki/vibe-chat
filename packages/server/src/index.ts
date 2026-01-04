@@ -1,15 +1,19 @@
 import { z } from "zod";
 import { ChatRoom } from "./room.js";
+import { DmRoom } from "./dm.js";
 import { exchangeGithubTokenForSession } from "./session.js";
 import { TelemetryEventSchema } from "@vscode-chat/protocol";
 import { parseServerConfig } from "./config.js";
-import { checkFixedWindowRateLimit, getClientIp } from "./util.js";
+import { json } from "./http.js";
+import { checkFixedWindowRateLimit, getClientIp, readRequestJsonWithLimit } from "./util.js";
 import type { RateWindow } from "./util.js";
 
 export interface Env {
   CHAT_ROOM: DurableObjectNamespace;
+  DM_ROOM: DurableObjectNamespace;
   SESSION_SECRET: string;
   DENY_GITHUB_USER_IDS?: string;
+  MODERATOR_GITHUB_USER_IDS?: string;
   CHAT_MESSAGE_RATE_WINDOW_MS?: string;
   CHAT_MESSAGE_RATE_MAX_COUNT?: string;
   CHAT_CONNECT_RATE_WINDOW_MS?: string;
@@ -18,10 +22,6 @@ export interface Env {
   CHAT_MAX_CONNECTIONS_PER_ROOM?: string;
   CHAT_HISTORY_LIMIT?: string;
   CHAT_HISTORY_PERSIST_EVERY_N_MESSAGES?: string;
-  CHAT_CONTENT_FILTER_MODE?: string;
-  CHAT_CONTENT_FILTER_LANGUAGES?: string;
-  CHAT_CONTENT_DENYLIST?: string;
-  CHAT_CONTENT_ALLOWLIST?: string;
 }
 
 const ExchangeRequestSchema = z.object({
@@ -29,10 +29,19 @@ const ExchangeRequestSchema = z.object({
 });
 
 export { ChatRoom };
+export { DmRoom };
 
 const AUTH_EXCHANGE_RATE_WINDOW_MS = 60_000;
 const AUTH_EXCHANGE_RATE_MAX_COUNT = 10;
+const AUTH_EXCHANGE_RATE_MAX_TRACKED_KEYS = 20_000;
 const authExchangeRateByIp = new Map<string, RateWindow>();
+const AUTH_EXCHANGE_MAX_BODY_BYTES = 2_048;
+
+const TELEMETRY_RATE_WINDOW_MS = 60_000;
+const TELEMETRY_RATE_MAX_COUNT = 120;
+const TELEMETRY_RATE_MAX_TRACKED_KEYS = 20_000;
+const telemetryRateByIp = new Map<string, RateWindow>();
+const TELEMETRY_MAX_BODY_BYTES = 4_096;
 
 const NO_STORE_HEADERS = {
   "cache-control": "no-store",
@@ -62,6 +71,7 @@ export default {
         const rateCheck = checkFixedWindowRateLimit(clientIp, authExchangeRateByIp, {
           windowMs: AUTH_EXCHANGE_RATE_WINDOW_MS,
           maxCount: AUTH_EXCHANGE_RATE_MAX_COUNT,
+          maxTrackedKeys: AUTH_EXCHANGE_RATE_MAX_TRACKED_KEYS,
         });
         if (!rateCheck.allowed) {
           log({
@@ -75,14 +85,17 @@ export default {
         }
       }
 
-      let body: unknown;
-      try {
-        body = await request.json();
-      } catch {
-        return json({ error: "invalid_json" }, 400, NO_STORE_HEADERS);
+      const body = await readRequestJsonWithLimit(request, {
+        maxBytes: AUTH_EXCHANGE_MAX_BODY_BYTES,
+        timeoutMs: 1_000,
+      });
+      if (!body.ok) {
+        return body.error === "too_large"
+          ? json({ error: "payload_too_large" }, 413, NO_STORE_HEADERS)
+          : json({ error: "invalid_json" }, 400, NO_STORE_HEADERS);
       }
 
-      const parsed = ExchangeRequestSchema.safeParse(body);
+      const parsed = ExchangeRequestSchema.safeParse(body.json);
       if (!parsed.success) {
         return json({ error: "invalid_payload" }, 400, NO_STORE_HEADERS);
       }
@@ -103,14 +116,31 @@ export default {
         return json({ error: "method_not_allowed" }, 405);
       }
 
-      let body: unknown;
-      try {
-        body = await request.json();
-      } catch {
-        return json({ error: "invalid_json" }, 400);
+      const clientIp = getClientIp(request);
+      if (clientIp) {
+        const rateCheck = checkFixedWindowRateLimit(clientIp, telemetryRateByIp, {
+          windowMs: TELEMETRY_RATE_WINDOW_MS,
+          maxCount: TELEMETRY_RATE_MAX_COUNT,
+          maxTrackedKeys: TELEMETRY_RATE_MAX_TRACKED_KEYS,
+        });
+        if (!rateCheck.allowed) {
+          return json({ error: "rate_limited", retryAfterMs: rateCheck.retryAfterMs }, 429, {
+            "retry-after": String(Math.ceil(rateCheck.retryAfterMs / 1000)),
+          });
+        }
       }
 
-      const parsed = TelemetryEventSchema.safeParse(body);
+      const body = await readRequestJsonWithLimit(request, {
+        maxBytes: TELEMETRY_MAX_BODY_BYTES,
+        timeoutMs: 1_000,
+      });
+      if (!body.ok) {
+        return body.error === "too_large"
+          ? json({ error: "payload_too_large" }, 413)
+          : json({ error: "invalid_json" }, 400);
+      }
+
+      const parsed = TelemetryEventSchema.safeParse(body.json);
       if (!parsed.success) {
         return json({ error: "invalid_payload" }, 400);
       }
@@ -133,18 +163,8 @@ export default {
   },
 };
 
-function json(data: unknown, status = 200, headers?: Record<string, string>): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      ...headers,
-    },
-  });
-}
-
 function log(event: Record<string, unknown>): void {
-  // NOTE: Keep logs structured and privacy-preserving. Never include tokens or message text.
+  // NOTE: Keep logs structured and privacy-preserving. Never include tokens, ciphertext, or key material.
   console.log(
     JSON.stringify({
       ts: new Date().toISOString(),

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { AuthUserSchema, PresenceSnapshotSchema } from "@vscode-chat/protocol";
 import { deriveChatStatusBarPresentation } from "../src/ui/chatStatusBarModel.js";
 
 describe("deriveChatStatusBarPresentation", () => {
@@ -25,23 +26,30 @@ describe("deriveChatStatusBarPresentation", () => {
   });
 
   it("shows connected with online count and list", () => {
+    const alice = AuthUserSchema.parse({
+      githubUserId: "1",
+      login: "alice",
+      avatarUrl: "https://example.com/a.png",
+      roles: [],
+    });
+    const bob = AuthUserSchema.parse({
+      githubUserId: "2",
+      login: "bob",
+      avatarUrl: "https://example.com/b.png",
+      roles: [],
+    });
+
     const presentation = deriveChatStatusBarPresentation(
       {
         authStatus: "signedIn",
         status: "connected",
         backendUrl: "http://127.0.0.1:8787",
-        user: { githubUserId: "1", login: "alice", avatarUrl: "https://example.com/a.png" },
+        user: alice,
       },
-      [
-        {
-          user: { githubUserId: "1", login: "alice", avatarUrl: "https://example.com/a.png" },
-          connections: 1,
-        },
-        {
-          user: { githubUserId: "2", login: "bob", avatarUrl: "https://example.com/b.png" },
-          connections: 2,
-        },
-      ],
+      PresenceSnapshotSchema.parse([
+        { user: alice, connections: 1 },
+        { user: bob, connections: 2 },
+      ]),
     );
 
     expect(presentation.visible).toBe(true);
@@ -52,21 +60,29 @@ describe("deriveChatStatusBarPresentation", () => {
   });
 
   it("caps list to topN and shows overflow", () => {
-    const presence = Array.from({ length: 12 }, (_, i) => ({
-      user: {
-        githubUserId: String(i + 1),
-        login: `user-${i + 1}`,
-        avatarUrl: "https://example.com/a.png",
-      },
-      connections: 1,
-    }));
+    const presence = PresenceSnapshotSchema.parse(
+      Array.from({ length: 12 }, (_, i) => ({
+        user: {
+          githubUserId: String(i + 1),
+          login: `user-${i + 1}`,
+          avatarUrl: "https://example.com/a.png",
+          roles: [],
+        },
+        connections: 1,
+      })),
+    );
 
     const presentation = deriveChatStatusBarPresentation(
       {
         authStatus: "signedIn",
         status: "connected",
         backendUrl: "http://127.0.0.1:8787",
-        user: { githubUserId: "1", login: "user-1", avatarUrl: "https://example.com/a.png" },
+        user: AuthUserSchema.parse({
+          githubUserId: "1",
+          login: "user-1",
+          avatarUrl: "https://example.com/a.png",
+          roles: [],
+        }),
       },
       presence,
       { topN: 10 },

@@ -1,37 +1,32 @@
 import type { AuthUser, PresenceSnapshot } from "@vscode-chat/protocol";
-
-type SocketAttachment = {
-  user: AuthUser;
-};
-
-type WebSocketLike = {
-  deserializeAttachment: () => unknown;
-};
+import { tryGetSocketUser, type WebSocketLike } from "./socketAttachment.js";
 
 export function derivePresenceSnapshotFromWebSockets(
   webSockets: WebSocketLike[],
-  opts?: { exclude?: WebSocketLike },
+  opts?: { exclude?: WebSocketLike | ReadonlySet<WebSocketLike> },
 ): PresenceSnapshot {
   const byUser = new Map<string, { user: AuthUser; connections: number }>();
+  const exclude = opts?.exclude;
 
   for (const ws of webSockets) {
-    if (opts?.exclude && ws === opts.exclude) continue;
-
-    try {
-      const attachment = ws.deserializeAttachment() as SocketAttachment | undefined;
-      const user = attachment?.user;
-      if (!user) continue;
-
-      const existing = byUser.get(user.githubUserId);
-      if (existing) {
-        existing.connections += 1;
+    if (exclude) {
+      if (exclude instanceof Set) {
+        if (exclude.has(ws)) continue;
+      } else if (ws === exclude) {
         continue;
       }
-
-      byUser.set(user.githubUserId, { user, connections: 1 });
-    } catch {
-      // ignore
     }
+
+    const user = tryGetSocketUser(ws);
+    if (!user) continue;
+
+    const existing = byUser.get(user.githubUserId);
+    if (existing) {
+      existing.connections += 1;
+      continue;
+    }
+
+    byUser.set(user.githubUserId, { user, connections: 1 });
   }
 
   const snapshot = [...byUser.values()];

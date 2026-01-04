@@ -21,7 +21,10 @@ describe("GitHubProfileService", () => {
       fetchImpl: () => Promise.reject(new Error("unexpected_fetch")),
     });
 
-    await expect(svc.getProfile("not a login")).rejects.toThrow("github_profile_invalid_login");
+    const result = await svc.getProfile("not a login");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected error");
+    expect(result.error.type).toBe("invalid_login");
   });
 
   it("dedupes in-flight requests (case-insensitive)", async () => {
@@ -46,8 +49,13 @@ describe("GitHubProfileService", () => {
     resolveFetch(jsonResponse(OCTOCAT_PAYLOAD));
 
     const [r1, r2] = await Promise.all([p1, p2]);
-    expect(r1.githubUserId).toBe("1");
-    expect(r2.githubUserId).toBe("1");
+    expect(r1.ok).toBe(true);
+    if (!r1.ok) throw new Error("expected profile");
+    expect(r1.profile.githubUserId).toBe("1");
+
+    expect(r2.ok).toBe(true);
+    if (!r2.ok) throw new Error("expected profile");
+    expect(r2.profile.githubUserId).toBe("1");
   });
 
   it("caches within ttl", async () => {
@@ -58,8 +66,10 @@ describe("GitHubProfileService", () => {
     };
 
     const svc = new GitHubProfileService({ fetchImpl, ttlMs: 60_000, nowMs: () => 0 });
-    await svc.getProfile("octocat");
-    await svc.getProfile("octocat");
+    const r1 = await svc.getProfile("octocat");
+    const r2 = await svc.getProfile("octocat");
+    if (!r1.ok) throw new Error("expected profile");
+    if (!r2.ok) throw new Error("expected profile");
 
     expect(fetchCalls).toBe(1);
   });
@@ -73,9 +83,11 @@ describe("GitHubProfileService", () => {
     };
 
     const svc = new GitHubProfileService({ fetchImpl, ttlMs: 1000, nowMs: () => now });
-    await svc.getProfile("octocat");
+    const r1 = await svc.getProfile("octocat");
+    if (!r1.ok) throw new Error("expected profile");
     now = 1001;
-    await svc.getProfile("octocat");
+    const r2 = await svc.getProfile("octocat");
+    if (!r2.ok) throw new Error("expected profile");
 
     expect(fetchCalls).toBe(2);
   });

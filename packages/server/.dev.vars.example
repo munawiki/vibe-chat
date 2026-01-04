@@ -5,6 +5,10 @@ SESSION_SECRET=replace-with-a-long-random-string-at-least-32-chars
 # Optional: comma-separated GitHub user ids to deny at the WebSocket boundary.
 # DENY_GITHUB_USER_IDS=123,456
 
+# Optional: comma-separated GitHub user ids to grant the moderator role.
+# Moderators can ban/unban users via the chat UI (room-scoped denylist persisted in Durable Object storage).
+# MODERATOR_GITHUB_USER_IDS=73450925
+
 # Optional: cost guardrails (numbers are parsed as integers).
 #
 # Message send rate limit (per GitHub user id).
@@ -23,7 +27,7 @@ SESSION_SECRET=replace-with-a-long-random-string-at-least-32-chars
 # CHAT_HISTORY_LIMIT=200
 # CHAT_HISTORY_PERSIST_EVERY_N_MESSAGES=1
 
-# Optional: denylist-based message content policy (zero-cost).
+# Optional: denylist-based message content policy.
 # When enabled, messages that match the profanity preset + denylist are rejected (not persisted or broadcast).
 # CHAT_CONTENT_FILTER_MODE=off
 # CHAT_CONTENT_FILTER_LANGUAGES=en,ko

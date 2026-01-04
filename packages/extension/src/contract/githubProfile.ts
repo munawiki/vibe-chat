@@ -1,12 +1,11 @@
 import { z } from "zod";
+import { GithubUserIdSchema } from "@vscode-chat/protocol";
 
 /**
  * Invariant: This module is a "pure contract" that is safe to import from both
  * Extension Host (Node) and Webview (browser). Keep it dependency-light and
  * side-effect-free to prevent accidental runtime coupling.
  */
-
-const NonEmptyString = z.string().min(1);
 
 export const GitHubLoginSchema = z
   .string()
@@ -25,7 +24,7 @@ export const GitHubProfileMetaSchema = z.object({
 export const GitHubProfileSchema = z
   .object({
     login: GitHubLoginSchema,
-    githubUserId: NonEmptyString,
+    githubUserId: GithubUserIdSchema,
     avatarUrl: z.string().url(),
     htmlUrl: z.string().url(),
 

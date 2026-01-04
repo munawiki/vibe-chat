@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "notes": [
     "Telemetry is emitted only when VS Code telemetry is enabled.",
-    "No GitHub access tokens, backend session tokens, chat message text, GitHub user ids/logins, or backend URL values are collected."
+    "No GitHub access tokens, backend session tokens, chat message plaintext, GitHub user ids/logins, workspace file contents/paths, or backend URL values are collected."
   ],
   "events": [
     {

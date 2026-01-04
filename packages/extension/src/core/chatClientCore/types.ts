@@ -1,4 +1,4 @@
-import type { AuthUser } from "@vscode-chat/protocol";
+import type { AuthUser, WsHandshakeRejection } from "@vscode-chat/protocol";
 
 export type AuthStatus = "signedOut" | "signedIn";
 
@@ -111,7 +111,13 @@ export type AuthExchangeError =
   | { type: "network_error" };
 
 export type WsOpenError =
-  | { type: "handshake_http_error"; status: number }
+  | {
+      type: "handshake_http_error";
+      status: number;
+      retryAfterMs?: number;
+      bodyText?: string;
+      handshakeRejection?: WsHandshakeRejection;
+    }
   | { type: "network_error" };
 
 export type ChatClientCoreEvent =
@@ -125,6 +131,7 @@ export type ChatClientCoreEvent =
   | { type: "auth/exchange.result"; ok: false; error: AuthExchangeError }
   | { type: "ws/open.result"; ok: true }
   | { type: "ws/open.result"; ok: false; error: WsOpenError; cause?: unknown }
+  | { type: "ws/welcome"; user: AuthUser }
   | { type: "ws/closed"; autoReconnectEnabled: boolean }
   | { type: "timer/reconnect.fired"; backendUrl: string };
 
