@@ -575,7 +575,9 @@ button:disabled {
   max-height: 140px;
   font-family: inherit;
   font-size: inherit;
-  line-height: var(--vscode-editor-line-height, 18px);
+  /* Why: VS Code can expose --vscode-editor-line-height as a unitless number (e.g. "19"),
+     which CSS interprets as a multiplier and can explode textarea height. */
+  line-height: 1.4;
   overflow-y: auto;
   box-sizing: border-box;
   min-width: 0;
