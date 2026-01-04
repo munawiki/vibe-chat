@@ -78,11 +78,15 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@speed-highlight/core": "^1.2.12",
     "@vscode-chat/protocol": "workspace:*",
+    "linkify-it": "^5.0.0",
+    "tweetnacl": "^1.0.3",
     "ws": "^8.18.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/linkify-it": "^5.0.0",
     "@types/node": "^22.10.5",
     "@types/vscode": "^1.90.0",
     "@types/ws": "^8.5.12",
