@@ -42,7 +42,7 @@
       "properties": {
         "vscodeChat.backendUrl": {
           "type": "string",
-          "default": "http://127.0.0.1:8787",
+          "default": "https://vscode-chat.munawiki.workers.dev",
           "description": "Backend base URL (e.g., https://<worker>.workers.dev)."
         },
         "vscodeChat.autoConnect": {

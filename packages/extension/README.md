@@ -6,7 +6,8 @@ This repository also includes an optional Cloudflare Workers + Durable Objects b
 
 ## Configuration
 
-- `vscodeChat.backendUrl` (default: `http://127.0.0.1:8787`)
+- `vscodeChat.backendUrl` (default: `https://vscode-chat.munawiki.workers.dev`)
+  - For local development: `http://127.0.0.1:8787`
 - `vscodeChat.autoConnect` (default: `true`)
 
 ## Privacy & Telemetry

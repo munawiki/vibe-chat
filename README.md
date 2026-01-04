@@ -15,7 +15,8 @@ A VS Code extension that lets you join a single shared chat room using GitHub si
 
 ## Configuration
 
-- `vscodeChat.backendUrl` (default: `http://127.0.0.1:8787`)
+- `vscodeChat.backendUrl` (default: `https://vscode-chat.munawiki.workers.dev`)
+  - For local development: `http://127.0.0.1:8787`
 - `vscodeChat.autoConnect` (default: `true`)
 
 ## Quality gate
@@ -25,3 +26,5 @@ A VS Code extension that lets you join a single shared chat room using GitHub si
 ## License
 
 Apache-2.0
+
+
