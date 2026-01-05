@@ -5,6 +5,14 @@ import type {
   ExtPresenceMsg,
 } from "../../src/contract/webviewProtocol.js";
 
+export type OutboxEntry = {
+  clientMessageId: string;
+  text: string;
+  createdAt: string;
+  phase: "pending" | "error";
+  errorMessage?: string;
+};
+
 /**
  * Centralized, mutable Webview runtime state.
  *
@@ -20,6 +28,8 @@ export type WebviewState = {
   activeChannel: "global" | "dm";
   activeDmId: DmId | null;
   globalHistory: ChatMessagePlain[];
+  outbox: OutboxEntry[];
+  settledClientMessageIds: Set<string>;
   dmThreads: ExtDmStateMsg["threads"];
   dmMessagesById: Map<DmId, DmMessagePlain[]>;
   activeProfileLogin: string;
@@ -45,6 +55,8 @@ export function createInitialWebviewState(): WebviewState {
     activeChannel: "global",
     activeDmId: null,
     globalHistory: [],
+    outbox: [],
+    settledClientMessageIds: new Set<string>(),
     dmThreads: [],
     dmMessagesById: new Map<DmId, DmMessagePlain[]>(),
     activeProfileLogin: "",

@@ -138,7 +138,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await this.client.connectIfSignedIn().catch((err) => this.postError(String(err)));
         return;
       case "ui/send":
-        this.sendPlaintext(parsed.data.text);
+        this.sendPlaintext({
+          text: parsed.data.text,
+          clientMessageId: parsed.data.clientMessageId,
+        });
         return;
       case "ui/dm.open": {
         const err = this.directMessages.handleUiOpen(
@@ -234,7 +237,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       case "server/message.new": {
         this.onNewMessage();
-        this.postMessage({ type: "ext/message", message: event.message });
+        this.postMessage({
+          type: "ext/message",
+          message: event.message,
+          ...(event.clientMessageId ? { clientMessageId: event.clientMessageId } : {}),
+        });
         return;
       }
 
@@ -280,6 +287,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
 
       case "server/error": {
+        if (event.clientMessageId) {
+          this.postMessage({
+            type: "ext/message.send.error",
+            clientMessageId: event.clientMessageId,
+            code: event.code,
+            ...(event.message ? { message: event.message } : {}),
+            ...(typeof event.retryAfterMs === "number" ? { retryAfterMs: event.retryAfterMs } : {}),
+          });
+          return;
+        }
         const moderation = this.moderation.handleServerError(event);
         if (moderation) this.postMessage(moderation);
         this.postError(event.message ?? event.code);
@@ -336,7 +353,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const view = this.view;
     if (!view) return;
 
-    this.unread.onViewVisibilityChanged(true);
+    this.unread.onViewVisibilityChanged(view.visible);
     this.unread.applyToView(view);
   }
 
@@ -349,7 +366,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.unreadVisibilitySyncTimer = undefined;
       if (this.view !== view) return;
 
-      if (view.visible && this.uiReady) this.unread.onViewVisibilityChanged(true);
+      this.unread.onViewVisibilityChanged(view.visible);
       this.unread.applyToView(view);
     }, 0);
   }
@@ -383,9 +400,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     void this.view.webview.postMessage(message);
   }
 
-  private sendPlaintext(text: string): void {
+  private sendPlaintext(options: { text: string; clientMessageId: string }): void {
     const state = this.client.getState();
     if (state.status !== "connected") return;
-    this.client.sendMessage(text);
+    this.client.sendMessage({ text: options.text, clientMessageId: options.clientMessageId });
   }
 }

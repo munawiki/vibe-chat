@@ -126,11 +126,12 @@ export class ChatClient implements vscode.Disposable {
     });
   }
 
-  sendMessage(text: string): void {
+  sendMessage(options: { text: string; clientMessageId?: string }): void {
     const payload: ClientEvent = {
       version: PROTOCOL_VERSION,
       type: "client/message.send",
-      text,
+      text: options.text,
+      ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
     };
     this.sendEvent(payload);
   }

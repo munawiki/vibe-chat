@@ -6,6 +6,7 @@ import { detectLanguage } from "@speed-highlight/core/detect";
 import type { WebviewContext } from "../app/types.js";
 import { hasModeratorRole, createModBadge } from "./userRoles.js";
 import { bindProfileOpen } from "./profile.js";
+import type { OutboxEntry } from "../state/webviewState.js";
 
 function assertNever(x: never): never {
   throw new Error(`unreachable: ${JSON.stringify(x)}`);
@@ -172,6 +173,58 @@ function createMessageRow(ctx: WebviewContext, message: RenderableMessage): HTML
   return row;
 }
 
+function createOutboxRow(ctx: WebviewContext, entry: OutboxEntry): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "msg messageRow outboxRow";
+  row.classList.toggle("pending", entry.phase === "pending");
+  row.classList.toggle("failed", entry.phase === "error");
+  row.dataset["clientMessageId"] = entry.clientMessageId;
+
+  const authorLoginLowerCase = ctx.state.signedInLoginLowerCase ?? "";
+  row.dataset["authorLogin"] = authorLoginLowerCase;
+
+  const avatar = document.createElement("img");
+  avatar.className = "avatar";
+  avatar.alt = "";
+  avatar.src = "";
+
+  const body = document.createElement("div");
+  body.className = "body";
+
+  const meta = document.createElement("div");
+  meta.className = "meta";
+
+  const author = document.createElement("button");
+  author.type = "button";
+  author.className = "login clickable";
+  author.textContent = authorLoginLowerCase;
+
+  const time = document.createElement("span");
+  time.className = "time muted";
+  const ts = new Date(entry.createdAt);
+  time.textContent = Number.isNaN(ts.getTime())
+    ? ""
+    : ts.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+
+  const status = document.createElement("span");
+  status.className = "status muted";
+  status.textContent =
+    entry.phase === "pending" ? "Sending…" : entry.errorMessage?.trim() || "Failed";
+
+  meta.append(author, time, status);
+
+  const text = document.createElement("div");
+  text.className = "text";
+  renderMessageText(ctx, text, entry.text);
+
+  body.append(meta, text);
+
+  classifyMessageRow(ctx, row, authorLoginLowerCase);
+  row.append(avatar, body);
+
+  return row;
+}
+
 export function renderHistory(
   ctx: WebviewContext,
   history: ReadonlyArray<RenderableMessage>,
@@ -179,6 +232,16 @@ export function renderHistory(
   if (!ctx.els.messages) return;
   const fragment = document.createDocumentFragment();
   for (const message of history) fragment.appendChild(createMessageRow(ctx, message));
+  ctx.els.messages.replaceChildren(fragment);
+  scrollMessagesToBottom(ctx);
+}
+
+export function renderGlobalConversation(ctx: WebviewContext): void {
+  if (!ctx.els.messages) return;
+  const fragment = document.createDocumentFragment();
+  for (const message of ctx.state.globalHistory)
+    fragment.appendChild(createMessageRow(ctx, message));
+  for (const entry of ctx.state.outbox) fragment.appendChild(createOutboxRow(ctx, entry));
   ctx.els.messages.replaceChildren(fragment);
   scrollMessagesToBottom(ctx);
 }
@@ -214,7 +277,15 @@ function sendCurrent(ctx: WebviewContext): void {
     if (!dmId) return;
     ctx.vscode.postMessage({ type: "ui/dm.send", dmId, text } satisfies UiInbound);
   } else {
-    ctx.vscode.postMessage({ type: "ui/send", text } satisfies UiInbound);
+    const clientMessageId = crypto.randomUUID();
+    ctx.state.outbox.push({
+      clientMessageId,
+      text,
+      createdAt: new Date().toISOString(),
+      phase: "pending",
+    });
+    renderGlobalConversation(ctx);
+    ctx.vscode.postMessage({ type: "ui/send", text, clientMessageId } satisfies UiInbound);
   }
   ctx.els.input.value = "";
 }

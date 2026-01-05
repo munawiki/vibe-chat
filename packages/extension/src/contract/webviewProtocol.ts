@@ -3,10 +3,12 @@ import {
   AuthUserSchema,
   CHAT_MESSAGE_TEXT_MAX_LEN,
   ChatMessagePlainSchema,
+  ClientMessageIdSchema,
   DmIdSchema,
   DmMessagePlainSchema,
   GithubUserIdSchema,
   PresenceSnapshotSchema,
+  ServerErrorSchema,
 } from "@vscode-chat/protocol";
 import { GitHubProfileSchema } from "./githubProfile.js";
 
@@ -21,6 +23,7 @@ export const UiInboundSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("ui/send"),
     text: z.string().min(1).max(CHAT_MESSAGE_TEXT_MAX_LEN),
+    clientMessageId: ClientMessageIdSchema,
   }),
   z.object({ type: z.literal("ui/dm.open"), peer: AuthUserSchema }),
   z.object({ type: z.literal("ui/dm.thread.select"), dmId: DmIdSchema }),
@@ -108,6 +111,7 @@ const ExtHistorySchema = z.object({
 const ExtMessageSchema = z.object({
   type: z.literal("ext/message"),
   message: ChatMessagePlainSchema,
+  clientMessageId: ClientMessageIdSchema.optional(),
 });
 
 const DmThreadSchema = z.object({
@@ -138,6 +142,13 @@ const ExtPresenceSchema = z.object({
   snapshot: PresenceSnapshotSchema,
 });
 const ExtErrorSchema = z.object({ type: z.literal("ext/error"), message: NonEmptyString });
+const ExtMessageSendErrorSchema = z.object({
+  type: z.literal("ext/message.send.error"),
+  clientMessageId: ClientMessageIdSchema,
+  code: ServerErrorSchema.shape.code,
+  message: NonEmptyString.optional(),
+  retryAfterMs: ServerErrorSchema.shape.retryAfterMs,
+});
 const ExtProfileResultSchema = z.object({
   type: z.literal("ext/profile.result"),
   login: NonEmptyString,
@@ -183,6 +194,7 @@ export const ExtOutboundSchema = z.discriminatedUnion("type", [
   ExtDmHistorySchema,
   ExtDmMessageSchema,
   ExtPresenceSchema,
+  ExtMessageSendErrorSchema,
   ExtErrorSchema,
   ExtProfileResultSchema,
   ExtProfileErrorSchema,
@@ -198,6 +210,7 @@ export type ExtStateMsg = Extract<ExtOutbound, { type: "ext/state" }>;
 export type ExtState = ExtStateMsg["state"];
 export type ExtHistoryMsg = Extract<ExtOutbound, { type: "ext/history" }>;
 export type ExtMessageMsg = Extract<ExtOutbound, { type: "ext/message" }>;
+export type ExtMessageSendErrorMsg = Extract<ExtOutbound, { type: "ext/message.send.error" }>;
 export type ExtDmStateMsg = Extract<ExtOutbound, { type: "ext/dm.state" }>;
 export type ExtDmHistoryMsg = Extract<ExtOutbound, { type: "ext/dm.history" }>;
 export type ExtDmMessageMsg = Extract<ExtOutbound, { type: "ext/dm.message" }>;

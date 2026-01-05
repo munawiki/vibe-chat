@@ -500,6 +500,19 @@ button:disabled {
   font-size: 12px;
 }
 
+.msg .status {
+  flex-shrink: 0;
+}
+
+.msg.outboxRow.pending {
+  opacity: 0.85;
+}
+
+.msg.outboxRow.failed .status {
+  color: var(--vscode-errorForeground);
+  opacity: 1;
+}
+
 .msg .text {
   margin-top: 2px;
   white-space: pre-wrap;

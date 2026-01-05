@@ -33,6 +33,40 @@ describe("webviewProtocol", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts ui/send with clientMessageId", () => {
+    const result = UiInboundSchema.safeParse({
+      type: "ui/send",
+      text: "hello",
+      clientMessageId: "f2d6aa4f-2f60-4c25-b9f5-7a7b6a7bd3b0",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts ext/message with clientMessageId", () => {
+    const result = ExtOutboundSchema.safeParse({
+      type: "ext/message",
+      clientMessageId: "f2d6aa4f-2f60-4c25-b9f5-7a7b6a7bd3b0",
+      message: {
+        id: "m1",
+        user: { githubUserId: "123", login: "octocat", avatarUrl: "https://example.com/a.png" },
+        text: "hello",
+        createdAt: new Date().toISOString(),
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts ext/message.send.error", () => {
+    const result = ExtOutboundSchema.safeParse({
+      type: "ext/message.send.error",
+      clientMessageId: "f2d6aa4f-2f60-4c25-b9f5-7a7b6a7bd3b0",
+      code: "rate_limited",
+      message: "Too many messages",
+      retryAfterMs: 10_000,
+    });
+    expect(result.success).toBe(true);
+  });
+
   it("accepts DM messages", () => {
     const open = UiInboundSchema.safeParse({
       type: "ui/dm.open",

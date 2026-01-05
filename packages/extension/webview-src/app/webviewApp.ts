@@ -14,6 +14,7 @@ import {
   bindChatUiEvents,
   reclassifyMessages,
   renderHistory,
+  renderGlobalConversation,
 } from "../features/chat.js";
 import {
   bindProfileUiEvents,
@@ -134,7 +135,7 @@ function renderConversation(ctx: WebviewContext): void {
   if (!ctx.els.messages) return;
 
   if (ctx.state.activeChannel === "global") {
-    renderHistory(ctx, ctx.state.globalHistory);
+    renderGlobalConversation(ctx);
     return;
   }
 
@@ -238,8 +239,19 @@ function toConnectionLabel(status: ConnectionStatus): string {
 }
 
 function renderState(extState: ExtState): void {
+  const wasConnected = ctx.state.isConnected;
   const status = extState.status ?? "unknown";
   ctx.state.isConnected = status === "connected";
+  if (wasConnected && !ctx.state.isConnected) {
+    let changed = false;
+    for (const entry of ctx.state.outbox) {
+      if (entry.phase !== "pending") continue;
+      entry.phase = "error";
+      entry.errorMessage = "Not connected.";
+      changed = true;
+    }
+    if (changed && ctx.state.activeChannel === "global") renderGlobalConversation(ctx);
+  }
 
   if (els.connButton) {
     els.connButton.hidden = false;
@@ -335,13 +347,38 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
       return;
     case "ext/history":
       ctx.state.globalHistory = msg.history;
-      if (ctx.state.activeChannel === "global") renderHistory(ctx, msg.history);
+      ctx.state.outbox = [];
+      ctx.state.settledClientMessageIds.clear();
+      if (ctx.state.activeChannel === "global") renderGlobalConversation(ctx);
       return;
     case "ext/message":
-      ctx.state.globalHistory.push(msg.message);
-      if (ctx.state.activeChannel === "global") addMessage(ctx, msg.message);
+      if (!ctx.state.globalHistory.some((m) => m.id === msg.message.id)) {
+        ctx.state.globalHistory.push(msg.message);
+      }
+      if (
+        msg.clientMessageId &&
+        !ctx.state.settledClientMessageIds.has(msg.clientMessageId) &&
+        ctx.state.outbox.some((e) => e.clientMessageId === msg.clientMessageId)
+      ) {
+        ctx.state.outbox = ctx.state.outbox.filter(
+          (e) => e.clientMessageId !== msg.clientMessageId,
+        );
+        ctx.state.settledClientMessageIds.add(msg.clientMessageId);
+      }
+      if (ctx.state.activeChannel === "global") renderGlobalConversation(ctx);
       renderComposer(ctx);
       return;
+    case "ext/message.send.error": {
+      if (ctx.state.settledClientMessageIds.has(msg.clientMessageId)) return;
+      const entry = ctx.state.outbox.find((e) => e.clientMessageId === msg.clientMessageId);
+      if (!entry) return;
+      entry.phase = "error";
+      entry.errorMessage = msg.message ?? msg.code;
+      ctx.state.settledClientMessageIds.add(msg.clientMessageId);
+      if (ctx.state.activeChannel === "global") renderGlobalConversation(ctx);
+      renderComposer(ctx);
+      return;
+    }
     case "ext/dm.state":
       handleDmState(ctx, msg);
       return;
