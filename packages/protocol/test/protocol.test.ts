@@ -36,6 +36,26 @@ describe("protocol schemas", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts client/message.send with clientMessageId", () => {
+    const result = ClientEventSchema.safeParse({
+      version: PROTOCOL_VERSION,
+      type: "client/message.send",
+      text: "hello",
+      clientMessageId: "f2d6aa4f-2f60-4c25-b9f5-7a7b6a7bd3b0",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects client/message.send with invalid clientMessageId", () => {
+    const result = ClientEventSchema.safeParse({
+      version: PROTOCOL_VERSION,
+      type: "client/message.send",
+      text: "hello",
+      clientMessageId: "not-a-uuid",
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("rejects client/message.send over plaintext limit", () => {
     const result = ClientEventSchema.safeParse({
       version: PROTOCOL_VERSION,
@@ -95,6 +115,21 @@ describe("protocol schemas", () => {
           createdAt: new Date().toISOString(),
         },
       ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts server/message.new with clientMessageId", () => {
+    const result = ServerEventSchema.safeParse({
+      version: PROTOCOL_VERSION,
+      type: "server/message.new",
+      clientMessageId: "f2d6aa4f-2f60-4c25-b9f5-7a7b6a7bd3b0",
+      message: {
+        id: "m1",
+        user: { githubUserId: "123", login: "octocat", avatarUrl: "https://example.com/a.png" },
+        text: "hello",
+        createdAt: new Date().toISOString(),
+      },
     });
     expect(result.success).toBe(true);
   });
@@ -191,6 +226,18 @@ describe("protocol schemas", () => {
       type: "server/error",
       code: "forbidden",
       message: "Moderator role required",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts server/error with clientMessageId", () => {
+    const result = ServerEventSchema.safeParse({
+      version: PROTOCOL_VERSION,
+      type: "server/error",
+      code: "rate_limited",
+      message: "Too many messages",
+      retryAfterMs: 10_000,
+      clientMessageId: "f2d6aa4f-2f60-4c25-b9f5-7a7b6a7bd3b0",
     });
     expect(result.success).toBe(true);
   });

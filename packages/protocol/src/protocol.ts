@@ -7,6 +7,9 @@ export const PROTOCOL_VERSION = 4 as const;
 // UI, Extension Host, and Server validation MUST stay consistent with this value.
 export const CHAT_MESSAGE_TEXT_MAX_LEN = 500 as const;
 
+export const ClientMessageIdSchema = z.string().uuid();
+export type ClientMessageId = z.infer<typeof ClientMessageIdSchema>;
+
 export const WsHandshakeRejectionCodeSchema = z.enum([
   "rate_limited",
   "room_full",
@@ -122,6 +125,7 @@ export const ClientHelloSchema = BaseEventSchema.extend({
 export const ClientMessageSendSchema = BaseEventSchema.extend({
   type: z.literal("client/message.send"),
   text: z.string().min(1).max(CHAT_MESSAGE_TEXT_MAX_LEN),
+  clientMessageId: ClientMessageIdSchema.optional(),
 });
 
 export const ClientDmIdentityPublishSchema = BaseEventSchema.extend({
@@ -176,6 +180,7 @@ export const ServerWelcomeSchema = BaseEventSchema.extend({
 export const ServerMessageNewSchema = BaseEventSchema.extend({
   type: z.literal("server/message.new"),
   message: ChatMessagePlainSchema,
+  clientMessageId: ClientMessageIdSchema.optional(),
 });
 
 export const ServerDmWelcomeSchema = BaseEventSchema.extend({
@@ -228,6 +233,7 @@ export const ServerErrorSchema = BaseEventSchema.extend({
   code: z.enum(["invalid_payload", "forbidden", "rate_limited", "auth_expired", "server_error"]),
   message: z.string().min(1).optional(),
   retryAfterMs: z.number().int().positive().optional(),
+  clientMessageId: ClientMessageIdSchema.optional(),
 });
 
 export const ServerEventSchema = z.discriminatedUnion("type", [
