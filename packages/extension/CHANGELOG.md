@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.0.6
+
+- Add optimistic outbox for new messages (shows pending state and send errors).
+- Correlate outbound sends with server events using `clientMessageId` for better UX.
+
+## 0.0.5
+
+- Improve connection reliability with a WebSocket heartbeat.
+- Fix unread badge syncing after the UI is ready.
+- Make author login names behave like links.
+
 ## 0.0.4
 
 - Fix composer stretching when optional panels are hidden.
