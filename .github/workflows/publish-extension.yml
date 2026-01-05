@@ -109,7 +109,7 @@ jobs:
           set -euo pipefail
 
           pnpm -s dlx @vscode/vsce verify-pat munawiki
-          pnpm -s dlx @vscode/vsce publish -i "./${{ env.VSIX_FILE }}" --no-dependencies --no-yarn
+          pnpm -s dlx @vscode/vsce publish -i "./${{ env.VSIX_FILE }}" --no-dependencies --no-yarn --skip-duplicate
         working-directory: packages/extension
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
@@ -123,7 +123,7 @@ jobs:
             exit 0
           fi
 
-          pnpm -s dlx ovsx publish -i "./${{ env.VSIX_FILE }}" --no-dependencies
+          pnpm -s dlx ovsx publish -i "./${{ env.VSIX_FILE }}" --no-dependencies --skip-duplicate
         working-directory: packages/extension
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
