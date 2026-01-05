@@ -26,6 +26,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private readonly disposables: vscode.Disposable[] = [];
   private readonly githubProfiles: GitHubProfileService;
   private serverEventChain: Promise<void> = Promise.resolve();
+  private unreadVisibilitySyncTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -51,6 +52,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   dispose(): void {
     for (const d of this.disposables) d.dispose();
     this.disposables.length = 0;
+    if (this.unreadVisibilitySyncTimer) {
+      clearTimeout(this.unreadVisibilitySyncTimer);
+      this.unreadVisibilitySyncTimer = undefined;
+    }
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -114,6 +119,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     switch (parsed.data.type) {
       case "ui/ready":
         this.uiReady = true;
+        this.syncUnreadOnUiReady();
         await this.client.refreshAuthState().catch((err) => this.postError(String(err)));
         this.postStateSnapshot();
         this.postMessage(this.directMessages.getStateMessage());
@@ -317,17 +323,35 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private onViewVisibilityChanged(): void {
-    const view = this.view;
-    if (!view) return;
-
-    this.unread.onViewVisibilityChanged(view.visible);
-    this.unread.applyToView(view);
+    this.scheduleUnreadVisibilitySync();
   }
 
   private onViewDisposed(): void {
     this.dispose();
     this.view = undefined;
     this.uiReady = false;
+  }
+
+  private syncUnreadOnUiReady(): void {
+    const view = this.view;
+    if (!view) return;
+
+    this.unread.onViewVisibilityChanged(true);
+    this.unread.applyToView(view);
+  }
+
+  private scheduleUnreadVisibilitySync(): void {
+    const view = this.view;
+    if (!view) return;
+
+    if (this.unreadVisibilitySyncTimer) clearTimeout(this.unreadVisibilitySyncTimer);
+    this.unreadVisibilitySyncTimer = setTimeout(() => {
+      this.unreadVisibilitySyncTimer = undefined;
+      if (this.view !== view) return;
+
+      if (view.visible && this.uiReady) this.unread.onViewVisibilityChanged(true);
+      this.unread.applyToView(view);
+    }, 0);
   }
 
   private postStateSnapshot(): void {
