@@ -1,12 +1,13 @@
 import { z } from "zod";
 import {
   ClientEventSchema,
-  DmIdSchema,
   DmIdentitySchema,
   DmMessageCipherSchema,
   GithubUserIdSchema,
   PROTOCOL_VERSION,
   ServerEventSchema,
+  dmIdFromParticipants,
+  dmIdParticipants,
   type AuthUser,
   type ChatMessagePlain,
   type DmId,
@@ -32,7 +33,6 @@ import { ChatRoomPresence } from "./presence.js";
 import { ChatRoomRateLimits } from "./rateLimits.js";
 import { countConnectionsForUser } from "./util.js";
 
-const DM_ID_RE = /^dm:v1:([1-9][0-9]*):([1-9][0-9]*)$/;
 const DM_IDENTITIES_KEY = "dm_identities";
 
 const DmIdentitiesStorageSchema = z.record(z.string(), DmIdentitySchema);
@@ -40,34 +40,6 @@ const DmHistoryResponseSchema = z.object({ history: z.array(DmMessageCipherSchem
 
 function assertNever(_value: never): never {
   throw new Error("unreachable");
-}
-
-function compareNumericStrings(a: string, b: string): -1 | 0 | 1 {
-  if (a === b) return 0;
-  if (a.length !== b.length) return a.length < b.length ? -1 : 1;
-  return a < b ? -1 : 1;
-}
-
-function toDmId(a: GithubUserId, b: GithubUserId): DmId {
-  const dmIdRaw = compareNumericStrings(a, b) <= 0 ? `dm:v1:${a}:${b}` : `dm:v1:${b}:${a}`;
-  return DmIdSchema.parse(dmIdRaw);
-}
-
-function parseDmId(dmId: DmId): { a: GithubUserId; b: GithubUserId } | undefined {
-  const match = DM_ID_RE.exec(dmId);
-  if (!match) return undefined;
-
-  const aRaw = match[1];
-  const bRaw = match[2];
-  if (!aRaw || !bRaw) return undefined;
-
-  const a = GithubUserIdSchema.safeParse(aRaw);
-  if (!a.success) return undefined;
-  const b = GithubUserIdSchema.safeParse(bRaw);
-  if (!b.success) return undefined;
-
-  if (compareNumericStrings(a.data, b.data) > 0) return undefined;
-  return { a: a.data, b: b.data };
 }
 
 function jsonWsHandshakeRejection(
@@ -316,7 +288,7 @@ export class ChatRoom implements DurableObject {
           return;
         }
 
-        const dmId = toDmId(user.githubUserId, parsed.data.targetGithubUserId);
+        const dmId = dmIdFromParticipants(user.githubUserId, parsed.data.targetGithubUserId);
         const history = await this.readDmHistory(dmId);
         const peerIdentity = this.dmIdentities.get(parsed.data.targetGithubUserId);
 
@@ -343,17 +315,19 @@ export class ChatRoom implements DurableObject {
           return;
         }
 
-        const parsedDm = parseDmId(parsed.data.dmId);
-        if (!parsedDm) {
+        let dmParticipants: { a: GithubUserId; b: GithubUserId };
+        try {
+          dmParticipants = dmIdParticipants(parsed.data.dmId);
+        } catch {
           this.sendError(ws, { code: "invalid_payload", message: "Invalid dmId" });
           return;
         }
 
         const peerGithubUserId =
-          user.githubUserId === parsedDm.a
-            ? parsedDm.b
-            : user.githubUserId === parsedDm.b
-              ? parsedDm.a
+          user.githubUserId === dmParticipants.a
+            ? dmParticipants.b
+            : user.githubUserId === dmParticipants.b
+              ? dmParticipants.a
               : undefined;
         if (!peerGithubUserId) {
           this.sendError(ws, { code: "forbidden", message: "Not a DM participant" });
