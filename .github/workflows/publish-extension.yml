@@ -123,6 +123,14 @@ jobs:
             exit 0
           fi
 
+          # Why:
+          # - Cursor and other VS Code forks often rely on Open VSX.
+          # - Open VSX requires a namespace matching `publisher` before publishing.
+          # Invariant:
+          # - The PAT MUST be able to publish to the namespace.
+          pnpm -s dlx ovsx create-namespace munawiki || true
+          pnpm -s dlx ovsx verify-pat munawiki
+
           pnpm -s dlx ovsx publish -i "./${{ env.VSIX_FILE }}" --no-dependencies --skip-duplicate
         working-directory: packages/extension
         env:
