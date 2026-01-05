@@ -462,11 +462,28 @@ button:disabled {
 }
 
 .msg .login {
+  /* Why:
+     - `.login` is a `<button>` (opens the GitHub profile card), but the global `button { ... }` rule
+       adds chrome (background/border/padding) that can look like a block behind the nickname.
+     Invariant:
+     - Author login MUST remain obviously interactive and keyboard accessible without adding visual noise. */
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--vscode-textLink-foreground);
+  border-radius: 4px;
+  text-align: left;
+  font: inherit;
   font-weight: 600;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.msg .login:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
 }
 
 .msg.own .login {
