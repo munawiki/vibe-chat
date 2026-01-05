@@ -18,6 +18,7 @@ import {
   type ReconnectTimer,
 } from "../adapters/reconnectTimer.js";
 import { openWebSocket } from "../adapters/wsConnection.js";
+import { startWsHeartbeat, type WsHeartbeatHandle } from "../adapters/wsHeartbeat.js";
 import {
   initialChatClientCoreState,
   reduceChatClientCore,
@@ -29,8 +30,12 @@ import {
 
 export type { AuthStatus, ChatClientState } from "../core/chatClientCore.js";
 
+const WS_PING_INTERVAL_MS = 20_000;
+const WS_PONG_TIMEOUT_MS = 60_000;
+
 export class ChatClient implements vscode.Disposable {
   private ws: WebSocket | undefined;
+  private wsHeartbeat: WsHeartbeatHandle | undefined;
   private reconnectTimer: ReconnectTimer | undefined;
   private readonly suppressedReconnect = new WeakSet<WebSocket>();
 
@@ -52,6 +57,7 @@ export class ChatClient implements vscode.Disposable {
   dispose(): void {
     cancelReconnectTimer(this.reconnectTimer);
     this.reconnectTimer = undefined;
+    this.stopWsHeartbeat();
     this.closeSocket(1000, "dispose");
     for (const d of this.disposables) d.dispose();
     this.disposables.length = 0;
@@ -284,6 +290,16 @@ export class ChatClient implements vscode.Disposable {
         }
 
         this.ws = result.ws;
+        this.wsHeartbeat = startWsHeartbeat({
+          ws: result.ws,
+          pingIntervalMs: WS_PING_INTERVAL_MS,
+          pongTimeoutMs: WS_PONG_TIMEOUT_MS,
+          onTimeout: ({ elapsedSinceLastPongMs }) => {
+            this.output.warn(
+              `WebSocket heartbeat timeout (no pong for ${elapsedSinceLastPongMs}ms). Terminating.`,
+            );
+          },
+        });
 
         try {
           result.ws.send(
@@ -329,6 +345,7 @@ export class ChatClient implements vscode.Disposable {
   }
 
   private closeSocket(code: number, reason: string): void {
+    this.stopWsHeartbeat();
     const ws = this.ws;
     if (!ws) return;
     this.ws = undefined;
@@ -347,6 +364,7 @@ export class ChatClient implements vscode.Disposable {
 
   private onWsClose(ws: WebSocket, code: number, reason: string): void {
     if (ws !== this.ws) return;
+    this.stopWsHeartbeat();
     this.ws = undefined;
 
     const suppressed = this.suppressedReconnect.has(ws);
@@ -409,5 +427,10 @@ export class ChatClient implements vscode.Disposable {
       .catch((err) => {
         this.output.warn(`Reconnect failed: ${String(err)}`);
       });
+  }
+
+  private stopWsHeartbeat(): void {
+    this.wsHeartbeat?.stop();
+    this.wsHeartbeat = undefined;
   }
 }
