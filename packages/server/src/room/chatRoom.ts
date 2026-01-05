@@ -32,6 +32,10 @@ import { ChatRoomModeration } from "./moderation.js";
 import { ChatRoomPresence } from "./presence.js";
 import { ChatRoomRateLimits } from "./rateLimits.js";
 import { countConnectionsForUser } from "./util.js";
+import {
+  createCorrelatedServerMessageNewEvents,
+  pickCorrelatedServerMessageNewEvent,
+} from "./messageCorrelation.js";
 
 const DM_IDENTITIES_KEY = "dm_identities";
 
@@ -248,6 +252,8 @@ export class ChatRoom implements DurableObject {
       }
 
       case "client/message.send": {
+        const clientMessageId = parsed.data.clientMessageId;
+
         const rateCheck = this.rateLimits.checkMessageRateLimit(user.githubUserId);
         if (!rateCheck.allowed) {
           this.log({ type: "chat_rate_limited", retryAfterMs: rateCheck.retryAfterMs });
@@ -255,6 +261,7 @@ export class ChatRoom implements DurableObject {
             code: "rate_limited",
             message: "Too many messages",
             retryAfterMs: rateCheck.retryAfterMs,
+            ...(clientMessageId ? { clientMessageId } : {}),
           });
           return;
         }
@@ -267,11 +274,19 @@ export class ChatRoom implements DurableObject {
         });
 
         await this.history.append(newMessage);
-        this.broadcast({
-          version: PROTOCOL_VERSION,
-          type: "server/message.new",
+        const events = createCorrelatedServerMessageNewEvents({
           message: newMessage,
-        } satisfies ServerEvent);
+          ...(clientMessageId ? { clientMessageId } : {}),
+        });
+        for (const socket of this.state.getWebSockets()) {
+          const socketUser = tryGetSocketUser(socket);
+          const event = pickCorrelatedServerMessageNewEvent({
+            recipientGithubUserId: socketUser?.githubUserId,
+            senderGithubUserId: user.githubUserId,
+            events,
+          });
+          this.sendEvent(socket, event);
+        }
         return;
       }
 
@@ -424,7 +439,10 @@ export class ChatRoom implements DurableObject {
 
   private sendError(
     ws: WebSocket,
-    err: Pick<Extract<ServerEvent, { type: "server/error" }>, "code" | "message" | "retryAfterMs">,
+    err: Pick<
+      Extract<ServerEvent, { type: "server/error" }>,
+      "code" | "message" | "retryAfterMs" | "clientMessageId"
+    >,
   ): void {
     this.sendEvent(ws, {
       version: PROTOCOL_VERSION,
