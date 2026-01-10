@@ -24,16 +24,11 @@ import {
   handleExtModerationUserDenied,
   handleExtProfileError,
   handleExtProfileResult,
-  hideProfile,
   openProfile,
   renderProfileModerationControls,
 } from "../features/profile.js";
-import {
-  bindPresenceUiEvents,
-  handleExtPresence,
-  hidePresenceOnEscape,
-  renderPresence,
-} from "../features/presence.js";
+import { bindPresenceUiEvents, handleExtPresence, renderPresence } from "../features/presence.js";
+import { closeOverlay } from "../features/overlay.js";
 import type { VscodeWebviewApi, WebviewContext } from "./types.js";
 
 declare const acquireVsCodeApi: <T>() => VscodeWebviewApi<T>;
@@ -322,16 +317,9 @@ els.dmTrust?.addEventListener("click", () => {
 });
 
 window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && ctx.state.profileVisible) {
-    e.preventDefault();
-    hideProfile(ctx);
-    return;
-  }
-
-  if (e.key === "Escape" && ctx.state.presenceVisible) {
-    e.preventDefault();
-    hidePresenceOnEscape(ctx);
-  }
+  if (e.key !== "Escape") return;
+  if (!closeOverlay(ctx)) return;
+  e.preventDefault();
 });
 
 window.addEventListener("message", (event: MessageEvent<unknown>) => {

@@ -8,6 +8,7 @@ import type {
   UiInbound,
 } from "../../src/contract/webviewProtocol.js";
 import type { WebviewContext } from "../app/types.js";
+import { closeOverlay, openOverlay } from "./overlay.js";
 
 function setProfileError(ctx: WebviewContext, text: string): void {
   const el = ctx.els.profileError;
@@ -31,28 +32,6 @@ function setProfileModStatus(ctx: WebviewContext, text: string): void {
   }
   el.hidden = false;
   el.textContent = text;
-}
-
-function showProfile(ctx: WebviewContext): void {
-  if (!ctx.els.profileOverlay) return;
-  ctx.els.profileOverlay.hidden = false;
-  ctx.state.profileVisible = true;
-  ctx.els.profileClose?.focus();
-}
-
-export function hideProfile(ctx: WebviewContext): void {
-  ctx.state.profileVisible = false;
-  ctx.state.activeProfileLogin = "";
-  ctx.state.activeProfileKey = "";
-  ctx.state.activeProfileGithubUserId = null;
-  ctx.state.moderationAction = null;
-  setProfileError(ctx, "");
-  setProfileModStatus(ctx, "");
-  if (ctx.els.profileBody) ctx.els.profileBody.textContent = "";
-  if (ctx.els.profileActions) ctx.els.profileActions.hidden = true;
-  if (ctx.els.profileMessage) ctx.els.profileMessage.hidden = true;
-  if (!ctx.els.profileOverlay) return;
-  ctx.els.profileOverlay.hidden = true;
 }
 
 function setProfileAvatar(ctx: WebviewContext, login: string, avatarUrl: string | undefined): void {
@@ -131,7 +110,7 @@ export function openProfile(
   ctx.state.activeProfileGithubUserId = null;
   ctx.state.moderationAction = null;
   renderProfileLoading(ctx, login, avatarUrl);
-  showProfile(ctx);
+  openOverlay(ctx, "profile");
   ctx.vscode.postMessage({ type: "ui/profile.open", login } satisfies UiInbound);
   renderProfileModerationControls(ctx);
 }
@@ -193,11 +172,11 @@ export function renderProfileModerationControls(ctx: WebviewContext): void {
 }
 
 export function bindProfileUiEvents(ctx: WebviewContext): void {
-  ctx.els.profileClose?.addEventListener("click", () => hideProfile(ctx));
+  ctx.els.profileClose?.addEventListener("click", () => closeOverlay(ctx));
 
   if (ctx.els.profileOverlay && ctx.els.profileCard) {
     ctx.els.profileOverlay.addEventListener("click", (e) => {
-      if (e.target === ctx.els.profileOverlay) hideProfile(ctx);
+      if (e.target === ctx.els.profileOverlay) closeOverlay(ctx);
     });
   }
 
@@ -219,7 +198,7 @@ export function bindProfileUiEvents(ctx: WebviewContext): void {
       type: "ui/dm.open",
       peer: { githubUserId, login, avatarUrl, roles: [] },
     } satisfies UiInbound);
-    hideProfile(ctx);
+    closeOverlay(ctx);
     ctx.els.channelDm?.click();
   });
 

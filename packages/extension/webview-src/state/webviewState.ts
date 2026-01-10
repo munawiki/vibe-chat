@@ -4,6 +4,7 @@ import type {
   ExtModerationActionMsg,
   ExtPresenceMsg,
 } from "../../src/contract/webviewProtocol.js";
+import type { ActiveOverlay } from "./overlayState.js";
 
 export type OutboxEntry = {
   clientMessageId: string;
@@ -22,7 +23,7 @@ export type OutboxEntry = {
  *
  * Invariants:
  * - `activeProfileKey` is the lower-cased `activeProfileLogin` (when a profile is active).
- * - Presence/profile visibility flags reflect overlay DOM visibility.
+ * - `activeOverlay` describes the single visible modal overlay (if any).
  */
 export type WebviewState = {
   activeChannel: "global" | "dm";
@@ -32,11 +33,10 @@ export type WebviewState = {
   settledClientMessageIds: Set<string>;
   dmThreads: ExtDmStateMsg["threads"];
   dmMessagesById: Map<DmId, DmMessagePlain[]>;
+  activeOverlay: ActiveOverlay;
   activeProfileLogin: string;
   activeProfileKey: string;
   activeProfileGithubUserId: GithubUserId | null;
-  profileVisible: boolean;
-  presenceVisible: boolean;
   presenceSnapshot: ExtPresenceMsg["snapshot"] | null;
   isConnected: boolean;
   signedInLoginLowerCase: string | null;
@@ -59,11 +59,10 @@ export function createInitialWebviewState(): WebviewState {
     settledClientMessageIds: new Set<string>(),
     dmThreads: [],
     dmMessagesById: new Map<DmId, DmMessagePlain[]>(),
+    activeOverlay: { kind: "none" },
     activeProfileLogin: "",
     activeProfileKey: "",
     activeProfileGithubUserId: null,
-    profileVisible: false,
-    presenceVisible: false,
     presenceSnapshot: null,
     isConnected: false,
     signedInLoginLowerCase: null,

@@ -2,32 +2,13 @@ import type { ExtPresenceMsg } from "../../src/contract/webviewProtocol.js";
 import type { WebviewContext } from "../app/types.js";
 import { createModBadge, hasModeratorRole } from "./userRoles.js";
 import { bindProfileOpen } from "./profile.js";
+import { closeOverlay, openOverlay } from "./overlay.js";
 
 function renderPresenceTitle(ctx: WebviewContext): void {
   if (!ctx.els.presenceTitle) return;
   const count = ctx.state.presenceSnapshot?.length;
   ctx.els.presenceTitle.textContent =
     typeof count === "number" ? `Online users (${count})` : "Online users";
-}
-
-function hidePresence(ctx: WebviewContext): void {
-  ctx.state.presenceVisible = false;
-  if (!ctx.els.presenceOverlay) return;
-  ctx.els.presenceOverlay.hidden = true;
-  ctx.els.connButton?.setAttribute("aria-expanded", "false");
-}
-
-function showPresence(ctx: WebviewContext): void {
-  if (!ctx.els.presenceOverlay) return;
-  ctx.els.presenceOverlay.hidden = false;
-  ctx.state.presenceVisible = true;
-  ctx.els.presenceClose?.focus();
-  ctx.els.connButton?.setAttribute("aria-expanded", "true");
-}
-
-function openPresence(ctx: WebviewContext): void {
-  if (!ctx.state.isConnected) return;
-  showPresence(ctx);
 }
 
 function renderPresencePanel(ctx: WebviewContext): void {
@@ -81,18 +62,21 @@ function renderPresencePanel(ctx: WebviewContext): void {
 }
 
 export function renderPresence(ctx: WebviewContext): void {
-  if (!ctx.state.isConnected) hidePresence(ctx);
+  if (!ctx.state.isConnected && ctx.state.activeOverlay.kind === "presence") closeOverlay(ctx);
   renderPresenceTitle(ctx);
   renderPresencePanel(ctx);
 }
 
 export function bindPresenceUiEvents(ctx: WebviewContext): void {
-  ctx.els.connButton?.addEventListener("click", () => openPresence(ctx));
-  ctx.els.presenceClose?.addEventListener("click", () => hidePresence(ctx));
+  ctx.els.connButton?.addEventListener("click", () => {
+    if (!ctx.state.isConnected) return;
+    openOverlay(ctx, "presence");
+  });
+  ctx.els.presenceClose?.addEventListener("click", () => closeOverlay(ctx));
 
   if (ctx.els.presenceOverlay && ctx.els.presenceCard) {
     ctx.els.presenceOverlay.addEventListener("click", (e) => {
-      if (e.target === ctx.els.presenceOverlay) hidePresence(ctx);
+      if (e.target === ctx.els.presenceOverlay) closeOverlay(ctx);
     });
   }
 }
@@ -100,9 +84,4 @@ export function bindPresenceUiEvents(ctx: WebviewContext): void {
 export function handleExtPresence(ctx: WebviewContext, msg: ExtPresenceMsg): void {
   ctx.state.presenceSnapshot = msg.snapshot;
   renderPresence(ctx);
-}
-
-export function hidePresenceOnEscape(ctx: WebviewContext): void {
-  if (!ctx.state.presenceVisible) return;
-  hidePresence(ctx);
 }
