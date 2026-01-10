@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.7
+
+- Add `Vibe Chat: Sign out` (command palette + profile action).
+- Scope DM keys/trusted peers per GitHub account to avoid cross-account mixups.
+- Improve modal overlay UX (single active overlay, Escape closes).
+
 ## 0.0.6
 
 - Add optimistic outbox for new messages (shows pending state and send errors).
