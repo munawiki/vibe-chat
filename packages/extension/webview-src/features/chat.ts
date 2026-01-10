@@ -127,16 +127,50 @@ function renderMessageText(ctx: WebviewContext, container: HTMLElement, messageT
 
 type RenderableMessage = ChatMessagePlain | DmMessagePlain;
 
+function createTimeEl(createdAt: string): HTMLElement {
+  const time = document.createElement("span");
+  time.className = "time muted";
+  const ts = new Date(createdAt);
+  time.textContent = Number.isNaN(ts.getTime())
+    ? ""
+    : ts.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return time;
+}
+
+function createAvatar(
+  ctx: WebviewContext,
+  options: { login: string; avatarUrl: string | undefined; openProfile: boolean },
+): HTMLImageElement {
+  const avatar = document.createElement("img");
+  avatar.className = options.openProfile ? "avatar clickable" : "avatar";
+  avatar.alt = options.openProfile ? options.login : "";
+  avatar.src = options.avatarUrl ?? "";
+  if (options.openProfile) bindProfileOpen(ctx, avatar, options.login, options.avatarUrl);
+  return avatar;
+}
+
+function createAuthorButton(
+  ctx: WebviewContext,
+  options: { login: string; avatarUrl: string | undefined; openProfile: boolean },
+): HTMLButtonElement {
+  const author = document.createElement("button");
+  author.type = "button";
+  author.className = "login clickable";
+  author.textContent = options.login;
+  if (options.openProfile) bindProfileOpen(ctx, author, options.login, options.avatarUrl);
+  return author;
+}
+
 function createMessageRow(ctx: WebviewContext, message: RenderableMessage): HTMLElement {
   const row = document.createElement("div");
   row.className = "msg messageRow";
   row.dataset["authorLogin"] = message.user.login;
 
-  const avatar = document.createElement("img");
-  avatar.className = "avatar clickable";
-  avatar.alt = message.user.login;
-  avatar.src = message.user.avatarUrl ?? "";
-  bindProfileOpen(ctx, avatar, message.user.login, message.user.avatarUrl);
+  const avatar = createAvatar(ctx, {
+    login: message.user.login,
+    avatarUrl: message.user.avatarUrl,
+    openProfile: true,
+  });
 
   const body = document.createElement("div");
   body.className = "body";
@@ -144,18 +178,12 @@ function createMessageRow(ctx: WebviewContext, message: RenderableMessage): HTML
   const meta = document.createElement("div");
   meta.className = "meta";
 
-  const author = document.createElement("button");
-  author.type = "button";
-  author.className = "login clickable";
-  author.textContent = message.user.login;
-  bindProfileOpen(ctx, author, message.user.login, message.user.avatarUrl);
-
-  const time = document.createElement("span");
-  time.className = "time muted";
-  const ts = new Date(message.createdAt);
-  time.textContent = Number.isNaN(ts.getTime())
-    ? ""
-    : ts.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const author = createAuthorButton(ctx, {
+    login: message.user.login,
+    avatarUrl: message.user.avatarUrl,
+    openProfile: true,
+  });
+  const time = createTimeEl(message.createdAt);
 
   meta.append(author);
   if (hasModeratorRole(message.user)) meta.appendChild(createModBadge());
@@ -183,10 +211,7 @@ function createOutboxRow(ctx: WebviewContext, entry: OutboxEntry): HTMLElement {
   const authorLoginLowerCase = ctx.state.signedInLoginLowerCase ?? "";
   row.dataset["authorLogin"] = authorLoginLowerCase;
 
-  const avatar = document.createElement("img");
-  avatar.className = "avatar";
-  avatar.alt = "";
-  avatar.src = "";
+  const avatar = createAvatar(ctx, { login: "", avatarUrl: "", openProfile: false });
 
   const body = document.createElement("div");
   body.className = "body";
@@ -194,17 +219,12 @@ function createOutboxRow(ctx: WebviewContext, entry: OutboxEntry): HTMLElement {
   const meta = document.createElement("div");
   meta.className = "meta";
 
-  const author = document.createElement("button");
-  author.type = "button";
-  author.className = "login clickable";
-  author.textContent = authorLoginLowerCase;
-
-  const time = document.createElement("span");
-  time.className = "time muted";
-  const ts = new Date(entry.createdAt);
-  time.textContent = Number.isNaN(ts.getTime())
-    ? ""
-    : ts.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const author = createAuthorButton(ctx, {
+    login: authorLoginLowerCase,
+    avatarUrl: "",
+    openProfile: false,
+  });
+  const time = createTimeEl(entry.createdAt);
 
   const status = document.createElement("span");
   status.className = "status muted";
