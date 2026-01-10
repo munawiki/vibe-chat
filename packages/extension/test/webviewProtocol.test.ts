@@ -43,15 +43,17 @@ describe("webviewProtocol", () => {
   });
 
   it("accepts ext/message with clientMessageId", () => {
+    const user = { githubUserId: "123", login: "octocat", avatarUrl: "https://example.com/a.png" };
+    const message = {
+      id: "m1",
+      user,
+      text: "hello",
+      createdAt: new Date().toISOString(),
+    };
     const result = ExtOutboundSchema.safeParse({
       type: "ext/message",
       clientMessageId: "f2d6aa4f-2f60-4c25-b9f5-7a7b6a7bd3b0",
-      message: {
-        id: "m1",
-        user: { githubUserId: "123", login: "octocat", avatarUrl: "https://example.com/a.png" },
-        text: "hello",
-        createdAt: new Date().toISOString(),
-      },
+      message,
     });
     expect(result.success).toBe(true);
   });

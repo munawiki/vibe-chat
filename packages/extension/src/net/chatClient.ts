@@ -27,11 +27,15 @@ import {
   type ChatClientCoreState,
   type ChatClientState,
 } from "../core/chatClientCore.js";
+import type { ExtensionBus } from "../bus/extensionBus.js";
 
 export type { AuthStatus, ChatClientState } from "../core/chatClientCore.js";
 
 const WS_PING_INTERVAL_MS = 20_000;
 const WS_PONG_TIMEOUT_MS = 60_000;
+const AUTH_SUPPRESSED_BY_USER_KEY = "vscodeChat.auth.suppressedByUser.v1";
+const CLEAR_SESSION_PREFERENCE_ON_NEXT_SIGN_IN_KEY =
+  "vscodeChat.auth.clearSessionPreferenceOnNextSignIn.v1";
 
 export class ChatClient implements vscode.Disposable {
   private ws: WebSocket | undefined;
@@ -48,9 +52,15 @@ export class ChatClient implements vscode.Disposable {
 
   constructor(
     private readonly output: vscode.LogOutputChannel,
+    private readonly globalState: vscode.Memento,
+    private readonly bus: ExtensionBus,
     private readonly telemetry?: ExtensionTelemetry,
   ) {
-    this.core = initialChatClientCoreState();
+    this.core = initialChatClientCoreState({
+      authSuppressedByUser: this.globalState.get<boolean>(AUTH_SUPPRESSED_BY_USER_KEY) ?? false,
+      clearSessionPreferenceOnNextSignIn:
+        this.globalState.get<boolean>(CLEAR_SESSION_PREFERENCE_ON_NEXT_SIGN_IN_KEY) ?? false,
+    });
     this.state = this.core.publicState;
   }
 
@@ -99,6 +109,10 @@ export class ChatClient implements vscode.Disposable {
   async signIn(): Promise<void> {
     await this.run({ type: "ui/signIn" });
     this.output.info("GitHub session acquired.");
+  }
+
+  async signOut(): Promise<void> {
+    await this.run({ type: "ui/signOut" });
   }
 
   async connect(): Promise<void> {
@@ -230,13 +244,72 @@ export class ChatClient implements vscode.Disposable {
   }
 
   private async process(event: ChatClientCoreEvent): Promise<void> {
+    const prev = this.core;
     const { state: next, commands } = reduceChatClientCore(this.core, event);
     this.core = next;
     this.setState(this.core.publicState);
+    await this.syncPersistentState(prev, next);
+    this.emitBusEvents(prev, next);
 
     for (const cmd of commands) {
       const followUp = await this.execute(cmd);
       if (followUp) await this.process(followUp);
+    }
+  }
+
+  private async syncPersistentState(
+    prev: ChatClientCoreState,
+    next: ChatClientCoreState,
+  ): Promise<void> {
+    const updates: Promise<void>[] = [];
+
+    if (prev.authSuppressedByUser !== next.authSuppressedByUser) {
+      updates.push(
+        Promise.resolve(
+          this.globalState.update(AUTH_SUPPRESSED_BY_USER_KEY, next.authSuppressedByUser),
+        ),
+      );
+    }
+    if (prev.clearSessionPreferenceOnNextSignIn !== next.clearSessionPreferenceOnNextSignIn) {
+      updates.push(
+        Promise.resolve(
+          this.globalState.update(
+            CLEAR_SESSION_PREFERENCE_ON_NEXT_SIGN_IN_KEY,
+            next.clearSessionPreferenceOnNextSignIn,
+          ),
+        ),
+      );
+    }
+
+    try {
+      await Promise.all(updates);
+    } catch (err) {
+      this.output.warn(`Failed to persist auth state: ${String(err)}`);
+    }
+  }
+
+  private emitBusEvents(prev: ChatClientCoreState, next: ChatClientCoreState): void {
+    if (prev.authSuppressedByUser !== next.authSuppressedByUser && next.authSuppressedByUser) {
+      this.bus.emit("auth/signedOut", { by: "user" });
+    }
+
+    if (
+      prev.githubAccountId &&
+      next.githubAccountId &&
+      prev.githubAccountId !== next.githubAccountId
+    ) {
+      this.bus.emit("auth/githubAccount.changed", {
+        prevGithubAccountId: prev.githubAccountId,
+        nextGithubAccountId: next.githubAccountId,
+      });
+    }
+
+    const prevGithubUserId =
+      "user" in prev.publicState ? (prev.publicState.user?.githubUserId ?? null) : null;
+    const nextGithubUserId =
+      "user" in next.publicState ? (next.publicState.user?.githubUserId ?? null) : null;
+    if (prevGithubUserId !== nextGithubUserId) {
+      this.bus.emit("auth/githubUser.changed", { prevGithubUserId, nextGithubUserId });
     }
   }
 
@@ -245,7 +318,10 @@ export class ChatClient implements vscode.Disposable {
       case "cmd/github.session.get": {
         try {
           const session = cmd.interactive
-            ? await getGitHubSession({ interactive: true })
+            ? await getGitHubSession({
+                interactive: true,
+                ...(cmd.clearSessionPreference ? { clearSessionPreference: true } : {}),
+              })
             : await getGitHubSession({ interactive: false });
           const nowMs = Date.now();
           return session

@@ -2,8 +2,9 @@ import * as vscode from "vscode";
 import { ChatClient } from "./net/chatClient.js";
 import { ChatViewProvider } from "./ui/chatViewProvider.js";
 import { ChatStatusBar } from "./ui/chatStatusBar.js";
+import { createExtensionBus } from "./bus/extensionBus.js";
 import { createExtensionTelemetry } from "./telemetry.js";
-import { DM_SECRET_STORAGE_KEY } from "./e2ee/dmCrypto.js";
+import { DM_SECRET_STORAGE_KEY_V1, dmSecretStorageKeyV2 } from "./e2ee/dmCrypto.js";
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("Vibe Chat", { log: true });
@@ -11,9 +12,10 @@ export function activate(context: vscode.ExtensionContext): void {
     output,
     getBackendUrl: () => vscode.workspace.getConfiguration("vscodeChat").get<string>("backendUrl"),
   });
-  const client = new ChatClient(output, telemetry);
+  const bus = createExtensionBus();
+  const client = new ChatClient(output, context.globalState, bus, telemetry);
   client.start();
-  const provider = new ChatViewProvider(context, client, output);
+  const provider = new ChatViewProvider(context, client, output, bus);
   const statusBar = new ChatStatusBar(client);
 
   context.subscriptions.push(
@@ -30,6 +32,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("vscodeChat.signIn", async () => {
       await client.signIn();
     }),
+    vscode.commands.registerCommand("vscodeChat.signOut", async () => {
+      await client.signOut();
+    }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (
         e.affectsConfiguration("vscodeChat.backendUrl") ||
@@ -44,7 +49,16 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
       vscode.commands.registerCommand("vscodeChat.dev.rotateDmKey", async () => {
         try {
-          await context.secrets.delete(DM_SECRET_STORAGE_KEY);
+          const state = client.getState();
+          const githubUserId =
+            state.authStatus === "signedIn" && state.user?.githubUserId
+              ? state.user.githubUserId
+              : undefined;
+          if (githubUserId) {
+            await context.secrets.delete(dmSecretStorageKeyV2(githubUserId));
+          } else {
+            await context.secrets.delete(DM_SECRET_STORAGE_KEY_V1);
+          }
           vscode.window.showInformationMessage(
             "Vibe Chat: DM key cleared. Reconnect to publish a new key.",
           );

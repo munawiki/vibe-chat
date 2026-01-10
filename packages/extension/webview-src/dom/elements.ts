@@ -35,6 +35,7 @@ export type Elements = {
   profileBan: HTMLButtonElement | null;
   profileUnban: HTMLButtonElement | null;
   profileMessage: HTMLButtonElement | null;
+  profileSignOut: HTMLButtonElement | null;
   profileOpenOnGitHub: HTMLButtonElement | null;
   profileModStatus: HTMLElement | null;
   profileError: HTMLElement | null;
@@ -78,6 +79,7 @@ export function getElements(): Elements {
     profileBan: document.getElementById("profileBan") as HTMLButtonElement | null,
     profileUnban: document.getElementById("profileUnban") as HTMLButtonElement | null,
     profileMessage: document.getElementById("profileMessage") as HTMLButtonElement | null,
+    profileSignOut: document.getElementById("profileSignOut") as HTMLButtonElement | null,
     profileOpenOnGitHub: document.getElementById("profileOpenOnGitHub") as HTMLButtonElement | null,
     profileModStatus: document.getElementById("profileModStatus"),
     profileError: document.getElementById("profileError"),

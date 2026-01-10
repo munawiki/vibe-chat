@@ -100,6 +100,8 @@ export type ChatClientCoreState = {
   publicState: ChatClientState;
   githubAccountId: string | undefined;
   cachedSession: CachedSession | undefined;
+  authSuppressedByUser: boolean;
+  clearSessionPreferenceOnNextSignIn: boolean;
   reconnectAttempt: number;
   reconnectScheduled: boolean;
   pending: Pending | undefined;
@@ -123,6 +125,7 @@ export type WsOpenError =
 export type ChatClientCoreEvent =
   | { type: "auth/refresh.requested" }
   | { type: "ui/signIn" }
+  | { type: "ui/signOut" }
   | { type: "ui/connect"; origin: "user" | "reconnect"; backendUrl: string; interactive: boolean }
   | { type: "ui/disconnect" }
   | { type: "github/session.result"; ok: true; session: GitHubSession; nowMs: number }
@@ -162,7 +165,7 @@ export type TelemetryEvent =
   | { name: "vscodeChat.ws.reconnect_scheduled"; attempt: number; delayMs: number };
 
 export type ChatClientCoreCommand =
-  | { type: "cmd/github.session.get"; interactive: boolean }
+  | { type: "cmd/github.session.get"; interactive: boolean; clearSessionPreference?: boolean }
   | { type: "cmd/auth.exchange"; backendUrl: string; accessToken: string }
   | { type: "cmd/ws.open"; backendUrl: string; token: string }
   | { type: "cmd/ws.close"; code: number; reason: string }

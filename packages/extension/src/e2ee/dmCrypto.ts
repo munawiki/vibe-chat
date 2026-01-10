@@ -1,7 +1,12 @@
 import nacl from "tweetnacl";
-import type { DmIdentity, DmMessageCipher } from "@vscode-chat/protocol";
+import type { DmIdentity, DmMessageCipher, GithubUserId } from "@vscode-chat/protocol";
 
-export const DM_SECRET_STORAGE_KEY = "vscodeChat.dm.secretKey.v1";
+export const DM_SECRET_STORAGE_KEY_V1 = "vscodeChat.dm.secretKey.v1";
+const DM_SECRET_STORAGE_KEY_V2_PREFIX = "vscodeChat.dm.secretKey.v2:";
+
+export function dmSecretStorageKeyV2(githubUserId: GithubUserId): string {
+  return `${DM_SECRET_STORAGE_KEY_V2_PREFIX}${githubUserId}`;
+}
 
 export type DmKeypair = {
   identity: DmIdentity;
@@ -17,12 +22,24 @@ function base64ToBytes(value: string): Uint8Array {
 }
 
 export async function getOrCreateDmKeypair(options: {
+  githubUserId: GithubUserId;
   secrets: {
     get(key: string): Thenable<string | undefined>;
     store(key: string, value: string): Thenable<void>;
+    delete?(key: string): Thenable<void>;
   };
 }): Promise<DmKeypair> {
-  const stored = await options.secrets.get(DM_SECRET_STORAGE_KEY);
+  const v2Key = dmSecretStorageKeyV2(options.githubUserId);
+
+  let stored = await options.secrets.get(v2Key);
+  if (!stored) {
+    const v1 = await options.secrets.get(DM_SECRET_STORAGE_KEY_V1);
+    if (v1) {
+      stored = v1;
+      await options.secrets.store(v2Key, v1);
+      await options.secrets.delete?.(DM_SECRET_STORAGE_KEY_V1);
+    }
+  }
   if (stored) {
     const secretKey = base64ToBytes(stored);
     const keyPair = nacl.box.keyPair.fromSecretKey(secretKey);
@@ -34,7 +51,7 @@ export async function getOrCreateDmKeypair(options: {
 
   const keyPair = nacl.box.keyPair();
   const secretKeyBase64 = bytesToBase64(keyPair.secretKey);
-  await options.secrets.store(DM_SECRET_STORAGE_KEY, secretKeyBase64);
+  await options.secrets.store(v2Key, secretKeyBase64);
   return {
     identity: { cipherSuite: "nacl.box.v1", publicKey: bytesToBase64(keyPair.publicKey) },
     secretKeyBase64,

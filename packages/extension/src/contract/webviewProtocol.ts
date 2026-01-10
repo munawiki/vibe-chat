@@ -19,6 +19,7 @@ const NonEmptyString = z.string().min(1);
 export const UiInboundSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ui/ready") }),
   z.object({ type: z.literal("ui/signIn") }),
+  z.object({ type: z.literal("ui/signOut") }),
   z.object({ type: z.literal("ui/reconnect") }),
   z.object({
     type: z.literal("ui/send"),

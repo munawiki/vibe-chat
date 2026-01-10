@@ -254,4 +254,62 @@ describe("chatClientCore", () => {
     expect(s1.publicState.user.roles).toEqual(["moderator"]);
     expect(s1.cachedSession?.user.roles).toEqual(["moderator"]);
   });
+
+  it("signs out explicitly and suppresses auto-connect until next interactive sign-in", () => {
+    const s0: ChatClientCoreState = {
+      ...initialChatClientCoreState(),
+      publicState: {
+        authStatus: "signedIn",
+        status: "connected",
+        backendUrl: "http://127.0.0.1:8787",
+        user,
+      },
+      githubAccountId: "acct",
+      cachedSession: { githubAccountId: "acct", token: "t", expiresAtMs: 120_000, user },
+      reconnectAttempt: 2,
+      reconnectScheduled: true,
+    };
+
+    const { state: s1, commands: c1 } = reduceChatClientCore(s0, { type: "ui/signOut" });
+
+    expect(s1.publicState.authStatus).toBe("signedOut");
+    expect(s1.publicState.status).toBe("disconnected");
+    expect(s1.githubAccountId).toBeUndefined();
+    expect(s1.cachedSession).toBeUndefined();
+    expect(s1.authSuppressedByUser).toBe(true);
+    expect(s1.clearSessionPreferenceOnNextSignIn).toBe(true);
+    expect(c1).toEqual([
+      { type: "cmd/reconnect.cancel" },
+      { type: "cmd/ws.close", code: 1000, reason: "user_signout" },
+    ]);
+
+    const { state: s2, commands: c2 } = reduceChatClientCore(s1, {
+      type: "auth/refresh.requested",
+    });
+    expect(s2.publicState.authStatus).toBe("signedOut");
+    expect(c2).toEqual([
+      { type: "cmd/reconnect.cancel" },
+      { type: "cmd/ws.close", code: 1000, reason: "auth_suppressed" },
+    ]);
+
+    const { state: s3, commands: c3 } = reduceChatClientCore(s2, {
+      type: "ui/connect",
+      origin: "user",
+      backendUrl: "http://127.0.0.1:8787",
+      interactive: false,
+    });
+    expect(s3.publicState.authStatus).toBe("signedOut");
+    expect(c3).toEqual([]);
+
+    const { commands: c4 } = reduceChatClientCore(s3, {
+      type: "ui/connect",
+      origin: "user",
+      backendUrl: "http://127.0.0.1:8787",
+      interactive: true,
+    });
+    expect(c4).toEqual([
+      { type: "cmd/reconnect.cancel" },
+      { type: "cmd/github.session.get", interactive: true, clearSessionPreference: true },
+    ]);
+  });
 });

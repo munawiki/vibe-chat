@@ -10,10 +10,15 @@ type SignedOutDisconnectedState = Extract<
   { authStatus: "signedOut"; status: "disconnected" }
 >;
 
-export const initialChatClientCoreState = (): ChatClientCoreState => ({
+export const initialChatClientCoreState = (options?: {
+  authSuppressedByUser?: boolean;
+  clearSessionPreferenceOnNextSignIn?: boolean;
+}): ChatClientCoreState => ({
   publicState: { authStatus: "signedOut", status: "disconnected" },
   githubAccountId: undefined,
   cachedSession: undefined,
+  authSuppressedByUser: options?.authSuppressedByUser ?? false,
+  clearSessionPreferenceOnNextSignIn: options?.clearSessionPreferenceOnNextSignIn ?? false,
   reconnectAttempt: 0,
   reconnectScheduled: false,
   pending: undefined,

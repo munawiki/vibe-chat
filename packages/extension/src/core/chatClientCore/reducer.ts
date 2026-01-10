@@ -8,6 +8,7 @@ import {
   handleUiConnect,
   handleUiDisconnect,
   handleUiSignIn,
+  handleUiSignOut,
 } from "./reducer/ui.js";
 import { handleWsClosed } from "./reducer/wsClosed.js";
 import { handleWsOpenResult } from "./reducer/wsOpenResult.js";
@@ -22,6 +23,8 @@ export function reduceChatClientCore(
       return handleAuthRefreshRequested(state, event);
     case "ui/signIn":
       return handleUiSignIn(state, event);
+    case "ui/signOut":
+      return handleUiSignOut(state, event);
     case "ui/connect":
       return handleUiConnect(state, event);
     case "ui/disconnect":

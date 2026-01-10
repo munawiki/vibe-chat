@@ -25,7 +25,8 @@
   "activationEvents": [
     "onView:vscodeChat.chatView",
     "onCommand:vscodeChat.openChat",
-    "onCommand:vscodeChat.signIn"
+    "onCommand:vscodeChat.signIn",
+    "onCommand:vscodeChat.signOut"
   ],
   "contributes": {
     "commands": [
@@ -36,6 +37,10 @@
       {
         "command": "vscodeChat.signIn",
         "title": "Vibe Chat: Sign in with GitHub"
+      },
+      {
+        "command": "vscodeChat.signOut",
+        "title": "Vibe Chat: Sign out"
       }
     ],
     "configuration": {
@@ -82,6 +87,7 @@
     "@speed-highlight/core": "^1.2.12",
     "@vscode-chat/protocol": "workspace:*",
     "linkify-it": "^5.0.0",
+    "mitt": "^3.0.1",
     "tweetnacl": "^1.0.3",
     "ws": "^8.18.0",
     "zod": "^3.24.1"

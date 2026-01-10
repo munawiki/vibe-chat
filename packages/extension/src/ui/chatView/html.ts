@@ -110,6 +110,7 @@ export function renderChatWebviewHtml(options: {
             <button class="secondary" id="profileUnban" type="button">Unban</button>
           </div>
           <button class="secondary" id="profileMessage" type="button" hidden>Message</button>
+          <button class="secondary" id="profileSignOut" type="button" hidden>Sign out</button>
           <button class="secondary" id="profileOpenOnGitHub">Open on GitHub</button>
         </div>
         <div class="profileModStatus muted" id="profileModStatus" hidden></div>

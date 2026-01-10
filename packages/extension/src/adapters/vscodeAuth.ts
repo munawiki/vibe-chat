@@ -11,16 +11,21 @@ export function onDidChangeGitHubSessions(listener: () => void): vscode.Disposab
   });
 }
 
-export async function getGitHubSession(options: { interactive: true }): Promise<GitHubSession>;
+export async function getGitHubSession(options: {
+  interactive: true;
+  clearSessionPreference?: boolean;
+}): Promise<GitHubSession>;
 export async function getGitHubSession(options: {
   interactive: false;
 }): Promise<GitHubSession | undefined>;
 export async function getGitHubSession(options: {
   interactive: boolean;
+  clearSessionPreference?: boolean;
 }): Promise<GitHubSession | undefined> {
   const session = options.interactive
     ? await vscode.authentication.getSession(GITHUB_PROVIDER_ID, GITHUB_SCOPES, {
         createIfNone: true,
+        ...(options.clearSessionPreference ? { clearSessionPreference: true } : {}),
       })
     : await vscode.authentication.getSession(GITHUB_PROVIDER_ID, GITHUB_SCOPES, { silent: true });
 

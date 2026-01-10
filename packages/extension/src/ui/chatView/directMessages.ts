@@ -23,7 +23,12 @@ import {
   type DmKeypair,
 } from "../../e2ee/dmCrypto.js";
 
-const TRUSTED_PEER_KEYS_STORAGE_KEY = "vscodeChat.dm.trustedPeerKeys.v1";
+const TRUSTED_PEER_KEYS_STORAGE_KEY_V1 = "vscodeChat.dm.trustedPeerKeys.v1";
+const TRUSTED_PEER_KEYS_STORAGE_KEY_V2_PREFIX = "vscodeChat.dm.trustedPeerKeys.v2:";
+
+function trustedPeerKeysStorageKeyV2(githubUserId: GithubUserId): string {
+  return `${TRUSTED_PEER_KEYS_STORAGE_KEY_V2_PREFIX}${githubUserId}`;
+}
 
 const TrustedPeerKeysSchema = z.record(z.string(), z.array(z.string().min(1)));
 
@@ -39,6 +44,8 @@ type DmThread = {
 export class ChatViewDirectMessages {
   private identityPublished = false;
   private keypair: DmKeypair | undefined;
+  private signedInGithubUserId: GithubUserId | null = null;
+  private trustedPeerKeysLoadedForGithubUserId: GithubUserId | null = null;
 
   private readonly peersByGithubUserId = new Map<GithubUserId, AuthUser>();
   private readonly threadsById = new Map<DmId, DmThread>();
@@ -48,11 +55,21 @@ export class ChatViewDirectMessages {
     private readonly context: vscode.ExtensionContext,
     private readonly output: vscode.LogOutputChannel,
   ) {
-    this.loadTrustedPeerKeys();
+    // trusted peer keys are loaded lazily per signed-in user id
   }
 
   reset(): void {
     this.identityPublished = false;
+  }
+
+  resetAccountState(): void {
+    this.identityPublished = false;
+    this.keypair = undefined;
+    this.signedInGithubUserId = null;
+    this.trustedPeerKeysLoadedForGithubUserId = null;
+    this.peersByGithubUserId.clear();
+    this.threadsById.clear();
+    this.trustedPeerKeysByGithubUserId.clear();
   }
 
   getStateMessage(): ExtDmStateMsg {
@@ -71,7 +88,7 @@ export class ChatViewDirectMessages {
   async ensureIdentityPublished(client: ChatClient, clientState: ChatClientState): Promise<void> {
     if (this.identityPublished) return;
     if (clientState.authStatus !== "signedIn" || clientState.status !== "connected") return;
-    const keypair = await this.getKeypair();
+    const keypair = await this.getUserKeypairScoped(clientState.user.githubUserId);
     client.publishDmIdentity(keypair.identity);
     this.identityPublished = true;
   }
@@ -123,7 +140,7 @@ export class ChatViewDirectMessages {
     if (thread.isBlocked) return thread.warning ?? "DM is blocked.";
     if (!thread.peerIdentity) return "Peer key unavailable.";
 
-    const keypair = await this.getKeypair();
+    const keypair = await this.getUserKeypairScoped(clientState.user.githubUserId);
     const encrypted = encryptDmText({
       plaintext: text,
       senderSecretKeyBase64: keypair.secretKeyBase64,
@@ -159,6 +176,15 @@ export class ChatViewDirectMessages {
     return this.getStateMessage();
   }
 
+  private async getSignedInConnectedKeypair(
+    clientState: ChatClientState,
+  ): Promise<{ githubUserId: GithubUserId; keypair: DmKeypair } | undefined> {
+    if (clientState.authStatus !== "signedIn" || clientState.status !== "connected") return;
+    const githubUserId = clientState.user.githubUserId;
+    const keypair = await this.getUserKeypairScoped(githubUserId);
+    return { githubUserId, keypair };
+  }
+
   async handleServerWelcome(options: {
     event: {
       dmId: DmId;
@@ -166,8 +192,11 @@ export class ChatViewDirectMessages {
       peerIdentity?: DmIdentity;
       history: DmMessageCipher[];
     };
+    clientState: ChatClientState;
   }): Promise<{ outbound: ExtDmStateMsg[]; history?: ExtDmHistoryMsg; error?: string }> {
-    const keypair = await this.getKeypair();
+    const auth = await this.getSignedInConnectedKeypair(options.clientState);
+    if (!auth) return { outbound: [this.getStateMessage()] };
+    const { keypair } = auth;
 
     const peer =
       this.peersByGithubUserId.get(options.event.peerGithubUserId) ??
@@ -246,16 +275,13 @@ export class ChatViewDirectMessages {
     event: { message: DmMessageCipher };
     clientState: ChatClientState;
   }): Promise<{ outbound: ExtDmStateMsg[]; message?: ExtDmMessageMsg; error?: string }> {
-    const state = options.clientState;
-    if (state.authStatus !== "signedIn" || state.status !== "connected") {
-      return { outbound: [this.getStateMessage()] };
-    }
-
-    const keypair = await this.getKeypair();
+    const auth = await this.getSignedInConnectedKeypair(options.clientState);
+    if (!auth) return { outbound: [this.getStateMessage()] };
+    const { githubUserId, keypair } = auth;
     const msg = options.event.message;
 
     const peerGithubUserId =
-      msg.sender.githubUserId === state.user.githubUserId
+      msg.sender.githubUserId === githubUserId
         ? msg.recipientGithubUserId
         : msg.sender.githubUserId;
 
@@ -310,10 +336,27 @@ export class ChatViewDirectMessages {
     };
   }
 
-  private async getKeypair(): Promise<DmKeypair> {
-    if (this.keypair) return this.keypair;
-    this.keypair = await getOrCreateDmKeypair({ secrets: this.context.secrets });
+  private async ensureUserScope(githubUserId: GithubUserId): Promise<void> {
+    if (this.signedInGithubUserId === githubUserId) return;
+    if (this.signedInGithubUserId !== null) {
+      this.resetAccountState();
+    }
+    this.signedInGithubUserId = githubUserId;
+    await this.loadTrustedPeerKeys(githubUserId);
+  }
+
+  private async getKeypair(githubUserId: GithubUserId): Promise<DmKeypair> {
+    if (this.keypair && this.signedInGithubUserId === githubUserId) return this.keypair;
+    this.keypair = await getOrCreateDmKeypair({
+      githubUserId,
+      secrets: this.context.secrets,
+    });
     return this.keypair;
+  }
+
+  private async getUserKeypairScoped(githubUserId: GithubUserId): Promise<DmKeypair> {
+    await this.ensureUserScope(githubUserId);
+    return this.getKeypair(githubUserId);
   }
 
   private getOrCreateThread(dmId: DmId, peer: AuthUser): DmThread {
@@ -327,16 +370,40 @@ export class ChatViewDirectMessages {
     return created;
   }
 
-  private loadTrustedPeerKeys(): void {
-    const raw = this.context.globalState.get<unknown>(TRUSTED_PEER_KEYS_STORAGE_KEY);
+  private async loadTrustedPeerKeys(githubUserId: GithubUserId): Promise<void> {
+    if (this.trustedPeerKeysLoadedForGithubUserId === githubUserId) return;
+    this.trustedPeerKeysByGithubUserId.clear();
+
+    const v2Key = trustedPeerKeysStorageKeyV2(githubUserId);
+    let raw = this.context.globalState.get<unknown>(v2Key);
+
+    if (raw === undefined) {
+      const v1Raw = this.context.globalState.get<unknown>(TRUSTED_PEER_KEYS_STORAGE_KEY_V1);
+      const v1Parsed = TrustedPeerKeysSchema.safeParse(v1Raw);
+      if (v1Parsed.success) {
+        raw = v1Parsed.data;
+        try {
+          await this.context.globalState.update(v2Key, v1Parsed.data);
+          await this.context.globalState.update(TRUSTED_PEER_KEYS_STORAGE_KEY_V1, undefined);
+        } catch (err) {
+          this.output.warn(`dm trusted keys migration failed: ${String(err)}`);
+        }
+      }
+    }
+
     const parsed = TrustedPeerKeysSchema.safeParse(raw);
-    if (!parsed.success) return;
+    if (!parsed.success) {
+      this.trustedPeerKeysLoadedForGithubUserId = githubUserId;
+      return;
+    }
 
     for (const [githubUserId, keys] of Object.entries(parsed.data)) {
       const githubUserIdParsed = GithubUserIdSchema.safeParse(githubUserId);
       if (!githubUserIdParsed.success) continue;
       this.trustedPeerKeysByGithubUserId.set(githubUserIdParsed.data, new Set(keys));
     }
+
+    this.trustedPeerKeysLoadedForGithubUserId = githubUserId;
   }
 
   private async addTrustedPeerKey(githubUserId: GithubUserId, publicKey: string): Promise<void> {
@@ -359,11 +426,15 @@ export class ChatViewDirectMessages {
   }
 
   private async persistTrustedPeerKeys(): Promise<void> {
+    if (!this.signedInGithubUserId) return;
     const out: Record<string, string[]> = {};
     for (const [githubUserId, keys] of this.trustedPeerKeysByGithubUserId) {
       out[githubUserId] = [...keys];
     }
-    await this.context.globalState.update(TRUSTED_PEER_KEYS_STORAGE_KEY, out);
+    await this.context.globalState.update(
+      trustedPeerKeysStorageKeyV2(this.signedInGithubUserId),
+      out,
+    );
   }
 }
 

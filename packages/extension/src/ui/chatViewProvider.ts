@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { GithubUserId, ServerEvent } from "@vscode-chat/protocol";
 import { ChatClient } from "../net/chatClient.js";
+import type { ExtensionBus } from "../bus/extensionBus.js";
 import { UiInboundSchema, type ExtOutbound } from "../contract/webviewProtocol.js";
 import { GitHubProfileService } from "../net/githubProfile.js";
 import { unknownErrorToMessage } from "./chatView/errors.js";
@@ -19,6 +20,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private view: vscode.WebviewView | undefined;
   private uiReady = false;
+  private pendingUiMessages: ExtOutbound[] = [];
   private readonly unread = new ChatViewUnread();
   private readonly presence = new ChatViewPresence();
   private readonly moderation = new ChatViewModeration();
@@ -28,12 +30,32 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private serverEventChain: Promise<void> = Promise.resolve();
   private unreadVisibilitySyncTimer: ReturnType<typeof setTimeout> | undefined;
 
+  private readonly serverEventMiddlewares: Array<(event: ServerEvent) => void | Promise<void>> = [
+    (event) => this.middlewareUnread(event),
+    (event) => this.middlewareGlobalChat(event),
+    (event) => this.middlewareDirectMessages(event),
+    (event) => this.middlewarePresence(event),
+    (event) => this.middlewareModeration(event),
+    (event) => this.middlewareErrors(event),
+  ];
+
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly client: ChatClient,
     private readonly output: vscode.LogOutputChannel,
+    private readonly bus: ExtensionBus,
   ) {
     this.directMessages = new ChatViewDirectMessages(this.context, this.output);
+
+    this.bus.on("auth/signedOut", () => {
+      this.directMessages.resetAccountState();
+      if (this.uiReady) this.postMessage(this.directMessages.getStateMessage());
+    });
+    this.bus.on("auth/githubAccount.changed", () => {
+      this.directMessages.resetAccountState();
+      if (this.uiReady) this.postMessage(this.directMessages.getStateMessage());
+    });
+
     this.githubProfiles = new GitHubProfileService({
       getAccessToken: async () => {
         try {
@@ -62,6 +84,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.dispose();
     this.view = view;
     this.uiReady = false;
+    this.pendingUiMessages = [];
     view.webview.options = {
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")],
@@ -80,6 +103,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.moderation.reset();
           this.directMessages.reset();
           this.serverEventChain = Promise.resolve();
+          this.pendingUiMessages = [];
         } else {
           void this.directMessages.ensureIdentityPublished(this.client, state).catch((err) => {
             this.output.warn(`dm identity publish failed: ${String(err)}`);
@@ -125,6 +149,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.postMessage(this.directMessages.getStateMessage());
         this.postPresenceSnapshot();
         this.postModerationSnapshot();
+        this.flushPendingUiMessages();
         if (isAutoConnectEnabledFromConfig()) {
           await this.client
             .connectIfSignedIn()
@@ -133,6 +158,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return;
       case "ui/signIn":
         await this.client.signInAndConnect().catch((err) => this.postError(String(err)));
+        return;
+      case "ui/signOut":
+        await this.client.signOut().catch((err) => this.postError(String(err)));
         return;
       case "ui/reconnect":
         await this.client.connectIfSignedIn().catch((err) => this.postError(String(err)));
@@ -218,8 +246,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private onServerEvent(event: ServerEvent): void {
-    const job = (): void => {
-      this.handleServerEvent(event);
+    const job = async (): Promise<void> => {
+      await this.handleServerEvent(event);
     };
 
     const next = this.serverEventChain.then(job, job).catch((err) => {
@@ -228,107 +256,103 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.serverEventChain = next;
   }
 
-  private handleServerEvent(event: ServerEvent): void {
-    switch (event.type) {
-      case "server/welcome": {
-        this.postMessage({ type: "ext/history", history: event.history });
-        return;
-      }
-
-      case "server/message.new": {
-        this.onNewMessage();
-        this.postMessage({
-          type: "ext/message",
-          message: event.message,
-          ...(event.clientMessageId ? { clientMessageId: event.clientMessageId } : {}),
-        });
-        return;
-      }
-
-      case "server/dm.welcome": {
-        const dmWelcomeEvent = {
-          dmId: event.dmId,
-          peerGithubUserId: event.peerGithubUserId,
-          history: event.history,
-          ...(event.peerIdentity ? { peerIdentity: event.peerIdentity } : {}),
-        };
-        void this.directMessages
-          .handleServerWelcome({
-            event: dmWelcomeEvent,
-          })
-          .then((result) => {
-            if (!this.uiReady) return;
-            for (const msg of result.outbound) this.postMessage(msg);
-            if (result.history) this.postMessage(result.history);
-            if (result.error) this.postError(result.error);
-          });
-        return;
-      }
-
-      case "server/dm.message.new": {
-        void this.directMessages
-          .handleServerMessageNew({
-            event: { message: event.message },
-            clientState: this.client.getState(),
-          })
-          .then((result) => {
-            if (!this.uiReady) return;
-            for (const msg of result.outbound) this.postMessage(msg);
-            if (result.message) this.postMessage(result.message);
-            if (result.error) this.postError(result.error);
-          });
-        return;
-      }
-
-      case "server/presence": {
-        const msg = this.presence.handleServerSnapshot(event.snapshot);
-        if (this.uiReady) this.postMessage(msg);
-        return;
-      }
-
-      case "server/error": {
-        if (event.clientMessageId) {
-          this.postMessage({
-            type: "ext/message.send.error",
-            clientMessageId: event.clientMessageId,
-            code: event.code,
-            ...(event.message ? { message: event.message } : {}),
-            ...(typeof event.retryAfterMs === "number" ? { retryAfterMs: event.retryAfterMs } : {}),
-          });
-          return;
-        }
-        const moderation = this.moderation.handleServerError(event);
-        if (moderation) this.postMessage(moderation);
-        this.postError(event.message ?? event.code);
-        return;
-      }
-
-      case "server/moderation.snapshot": {
-        const msg = this.moderation.handleServerSnapshot(event);
-        if (this.uiReady) this.postMessage(msg);
-        return;
-      }
-
-      case "server/moderation.user.denied": {
-        const { userMessage, resolved } = this.moderation.handleServerUserDenied(
-          event,
-          this.client.getState(),
-        );
-        if (this.uiReady) this.postMessage(userMessage);
-        if (resolved) this.postMessage(resolved);
-        return;
-      }
-
-      case "server/moderation.user.allowed": {
-        const { userMessage, resolved } = this.moderation.handleServerUserAllowed(
-          event,
-          this.client.getState(),
-        );
-        if (this.uiReady) this.postMessage(userMessage);
-        if (resolved) this.postMessage(resolved);
-        return;
-      }
+  private async handleServerEvent(event: ServerEvent): Promise<void> {
+    for (const middleware of this.serverEventMiddlewares) {
+      await middleware(event);
     }
+  }
+
+  private middlewareUnread(event: ServerEvent): void {
+    if (event.type !== "server/message.new") return;
+    this.onNewMessage();
+  }
+
+  private middlewareGlobalChat(event: ServerEvent): void {
+    if (event.type === "server/welcome") {
+      this.postMessage({ type: "ext/history", history: event.history });
+      return;
+    }
+
+    if (event.type !== "server/message.new") return;
+    this.postMessage({
+      type: "ext/message",
+      message: event.message,
+      ...(event.clientMessageId ? { clientMessageId: event.clientMessageId } : {}),
+    });
+  }
+
+  private async middlewareDirectMessages(event: ServerEvent): Promise<void> {
+    if (event.type === "server/dm.welcome") {
+      const dmWelcomeEvent = {
+        dmId: event.dmId,
+        peerGithubUserId: event.peerGithubUserId,
+        history: event.history,
+        ...(event.peerIdentity ? { peerIdentity: event.peerIdentity } : {}),
+      };
+      const result = await this.directMessages.handleServerWelcome({
+        event: dmWelcomeEvent,
+        clientState: this.client.getState(),
+      });
+      this.postDirectMessagesResult(result.outbound, result.history, result.error);
+      return;
+    }
+
+    if (event.type !== "server/dm.message.new") return;
+    const result = await this.directMessages.handleServerMessageNew({
+      event: { message: event.message },
+      clientState: this.client.getState(),
+    });
+    this.postDirectMessagesResult(result.outbound, result.message, result.error);
+  }
+
+  private middlewarePresence(event: ServerEvent): void {
+    if (event.type !== "server/presence") return;
+    const msg = this.presence.handleServerSnapshot(event.snapshot);
+    this.postMessage(msg);
+  }
+
+  private middlewareModeration(event: ServerEvent): void {
+    if (event.type === "server/moderation.snapshot") {
+      const msg = this.moderation.handleServerSnapshot(event);
+      this.postMessage(msg);
+      return;
+    }
+
+    if (event.type === "server/moderation.user.denied") {
+      const { userMessage, resolved } = this.moderation.handleServerUserDenied(
+        event,
+        this.client.getState(),
+      );
+      this.postMessage(userMessage);
+      if (resolved) this.postMessage(resolved);
+      return;
+    }
+
+    if (event.type !== "server/moderation.user.allowed") return;
+    const { userMessage, resolved } = this.moderation.handleServerUserAllowed(
+      event,
+      this.client.getState(),
+    );
+    this.postMessage(userMessage);
+    if (resolved) this.postMessage(resolved);
+  }
+
+  private middlewareErrors(event: ServerEvent): void {
+    if (event.type !== "server/error") return;
+    if (event.clientMessageId) {
+      this.postMessage({
+        type: "ext/message.send.error",
+        clientMessageId: event.clientMessageId,
+        code: event.code,
+        ...(event.message ? { message: event.message } : {}),
+        ...(typeof event.retryAfterMs === "number" ? { retryAfterMs: event.retryAfterMs } : {}),
+      });
+      return;
+    }
+
+    const moderation = this.moderation.handleServerError(event);
+    if (moderation) this.postMessage(moderation);
+    this.postError(event.message ?? event.code);
   }
 
   private onNewMessage(): void {
@@ -347,6 +371,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.dispose();
     this.view = undefined;
     this.uiReady = false;
+    this.pendingUiMessages = [];
   }
 
   private syncUnreadOnUiReady(): void {
@@ -397,7 +422,33 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private postMessage(message: ExtOutbound): void {
     if (!this.view) return;
+    if (!this.uiReady) {
+      this.pendingUiMessages.push(message);
+      return;
+    }
     void this.view.webview.postMessage(message);
+  }
+
+  private flushPendingUiMessages(): void {
+    const view = this.view;
+    if (!view || !this.uiReady) return;
+    if (this.pendingUiMessages.length === 0) return;
+
+    const pending = this.pendingUiMessages;
+    this.pendingUiMessages = [];
+    for (const msg of pending) {
+      void view.webview.postMessage(msg);
+    }
+  }
+
+  private postDirectMessagesResult(
+    outbound: ExtOutbound[],
+    additional: ExtOutbound | undefined,
+    error: string | undefined,
+  ): void {
+    for (const msg of outbound) this.postMessage(msg);
+    if (additional) this.postMessage(additional);
+    if (error) this.postError(error);
   }
 
   private sendPlaintext(options: { text: string; clientMessageId: string }): void {

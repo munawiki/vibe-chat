@@ -40,10 +40,39 @@ export function handleGithubSessionResult(
         };
       }
 
+      const accountChanged = Boolean(
+        state.githubAccountId && state.githubAccountId !== event.session.githubAccountId,
+      );
+
+      if (accountChanged) {
+        return {
+          state: {
+            ...state,
+            githubAccountId: event.session.githubAccountId,
+            cachedSession: undefined,
+            publicState: {
+              authStatus: "signedIn",
+              status: "disconnected",
+              ...(state.publicState.backendUrl ? { backendUrl: state.publicState.backendUrl } : {}),
+            },
+            pending: undefined,
+            reconnectAttempt: 0,
+            reconnectScheduled: false,
+          },
+          commands: [
+            { type: "cmd/reconnect.cancel" },
+            { type: "cmd/ws.close", code: 1000, reason: "github_account_changed" },
+          ],
+        };
+      }
+
       return {
         state: {
           ...state,
           githubAccountId: event.session.githubAccountId,
+          ...(pending.interactive
+            ? { authSuppressedByUser: false, clearSessionPreferenceOnNextSignIn: false }
+            : {}),
           publicState: { ...state.publicState, authStatus: "signedIn" },
           pending: undefined,
         },
@@ -100,6 +129,9 @@ export function handleGithubSessionResult(
             ...state,
             githubAccountId,
             cachedSession,
+            ...(pending.interactive
+              ? { authSuppressedByUser: false, clearSessionPreferenceOnNextSignIn: false }
+              : {}),
             publicState: {
               authStatus: "signedIn",
               status: "connecting",
@@ -129,6 +161,9 @@ export function handleGithubSessionResult(
           ...state,
           githubAccountId,
           cachedSession,
+          ...(pending.interactive
+            ? { authSuppressedByUser: false, clearSessionPreferenceOnNextSignIn: false }
+            : {}),
           publicState: {
             authStatus: "signedIn",
             status: "connecting",

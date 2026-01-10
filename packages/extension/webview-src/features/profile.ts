@@ -155,6 +155,12 @@ export function renderProfileModerationControls(ctx: WebviewContext): void {
     ctx.els.profileMessage.disabled = !canMessage;
   }
 
+  const canSignOut = ctx.state.signedInGithubUserId !== null && isOwnProfile;
+  if (ctx.els.profileSignOut) {
+    ctx.els.profileSignOut.hidden = !canSignOut;
+    ctx.els.profileSignOut.disabled = !canSignOut;
+  }
+
   let statusText = "";
   const action = ctx.state.moderationAction;
   if (action?.phase === "pending") {
@@ -200,6 +206,11 @@ export function bindProfileUiEvents(ctx: WebviewContext): void {
     } satisfies UiInbound);
     closeOverlay(ctx);
     ctx.els.channelDm?.click();
+  });
+
+  ctx.els.profileSignOut?.addEventListener("click", () => {
+    ctx.vscode.postMessage({ type: "ui/signOut" } satisfies UiInbound);
+    closeOverlay(ctx);
   });
 
   ctx.els.profileBan?.addEventListener("click", () => {
