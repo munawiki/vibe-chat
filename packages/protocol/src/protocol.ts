@@ -3,8 +3,6 @@ import { DmIdSchema, GithubUserIdSchema } from "./identifiers.js";
 
 export const PROTOCOL_VERSION = 4 as const;
 
-// Invariant: This is the single source of truth for the maximum chat message text length.
-// UI, Extension Host, and Server validation MUST stay consistent with this value.
 export const CHAT_MESSAGE_TEXT_MAX_LEN = 500 as const;
 
 export const ClientMessageIdSchema = z.string().uuid();
@@ -44,11 +42,26 @@ export const ChatMessagePlainSchema = z.object({
 export type ChatMessagePlain = z.infer<typeof ChatMessagePlainSchema>;
 
 function base64DecodedBytesLength(value: string): number | null {
-  if (value.length % 4 !== 0) return null;
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return null;
-  if (value.includes("=") && !/=+$/.test(value)) return null;
-  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
-  return (value.length * 3) / 4 - padding;
+  const len = value.length;
+  if (len % 4 !== 0) return null;
+  let padding = 0;
+  if (value.endsWith("==")) {
+    padding = 2;
+  } else if (value.endsWith("=")) {
+    padding = 1;
+  }
+
+  for (let i = 0; i < len - padding; i += 1) {
+    const code = value.codePointAt(i);
+    if (code === undefined) return null;
+    const isUpper = code >= 65 && code <= 90;
+    const isLower = code >= 97 && code <= 122;
+    const isDigit = code >= 48 && code <= 57;
+    const isPlusOrSlash = code === 43 || code === 47;
+    if (!isUpper && !isLower && !isDigit && !isPlusOrSlash) return null;
+  }
+
+  return (len * 3) / 4 - padding;
 }
 
 export const DmCipherSuiteSchema = z.enum(["nacl.box.v1"]);

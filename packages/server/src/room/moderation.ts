@@ -13,8 +13,14 @@ type SendError = (
   err: Pick<Extract<ServerEvent, { type: "server/error" }>, "code" | "message" | "retryAfterMs">,
 ) => void;
 
+function compareGithubUserIds(a: GithubUserId, b: GithubUserId): number {
+  if (a === b) return 0;
+  if (a.length !== b.length) return a.length < b.length ? -1 : 1;
+  return a < b ? -1 : 1;
+}
+
 export class ChatRoomModeration {
-  readonly ready: Promise<void>;
+  private readyPromise: Promise<void> | undefined;
 
   private readonly roomDeniedGithubUserIds = new Set<GithubUserId>();
 
@@ -25,8 +31,11 @@ export class ChatRoomModeration {
     private readonly sendEvent: (ws: WebSocket, event: ServerEvent) => void,
     private readonly sendError: SendError,
     private readonly log: (event: Record<string, unknown>) => void,
-  ) {
-    this.ready = this.loadRoomDenylist();
+  ) {}
+
+  get ready(): Promise<void> {
+    this.readyPromise ??= this.loadRoomDenylist();
+    return this.readyPromise;
   }
 
   isDeniedGithubUserId(githubUserId: GithubUserId): boolean {
@@ -44,8 +53,8 @@ export class ChatRoomModeration {
     this.sendEvent(ws, {
       version: PROTOCOL_VERSION,
       type: "server/moderation.snapshot",
-      operatorDeniedGithubUserIds: [...this.operatorDeniedGithubUserIds].sort(),
-      roomDeniedGithubUserIds: [...this.roomDeniedGithubUserIds].sort(),
+      operatorDeniedGithubUserIds: [...this.operatorDeniedGithubUserIds].sort(compareGithubUserIds),
+      roomDeniedGithubUserIds: [...this.roomDeniedGithubUserIds].sort(compareGithubUserIds),
     } satisfies ServerEvent);
   }
 
@@ -154,7 +163,10 @@ export class ChatRoomModeration {
   }
 
   private async persistRoomDenylist(): Promise<void> {
-    await this.state.storage.put(ROOM_DENYLIST_KEY, [...this.roomDeniedGithubUserIds].sort());
+    await this.state.storage.put(
+      ROOM_DENYLIST_KEY,
+      [...this.roomDeniedGithubUserIds].sort(compareGithubUserIds),
+    );
   }
 
   private kickUser(targetGithubUserId: GithubUserId): void {

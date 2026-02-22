@@ -30,6 +30,14 @@
         "attempt": "number",
         "delayMs": "number"
       }
+    },
+    {
+      "name": "vscodeChat.ws.legacy_fallback",
+      "description": "Measured usage of legacy HTTP 429 body-text fallback classification during websocket handshake handling.",
+      "fields": {
+        "fallback": "\"handshake_429_body\"",
+        "kind": "rate_limited | room_full | too_many_connections | unknown"
+      }
     }
   ]
 }

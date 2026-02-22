@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { stripTrailingSlashes } from "../util/strings.js";
 
 export function getBackendUrl(): string {
   const cfg = vscode.workspace.getConfiguration("vscodeChat");
@@ -6,7 +7,7 @@ export function getBackendUrl(): string {
   if (!url) {
     throw new Error("vscodeChat.backendUrl is required");
   }
-  return url.replace(/\/+$/, "");
+  return stripTrailingSlashes(url);
 }
 
 export function autoConnectEnabled(): boolean {

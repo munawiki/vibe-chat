@@ -26,6 +26,7 @@ import {
   type ChatClientCoreEvent,
   type ChatClientCoreState,
   type ChatClientState,
+  type WsOpenError,
 } from "../core/chatClientCore.js";
 import type { ExtensionBus } from "../bus/extensionBus.js";
 
@@ -315,109 +316,137 @@ export class ChatClient implements vscode.Disposable {
 
   private async execute(cmd: ChatClientCoreCommand): Promise<ChatClientCoreEvent | void> {
     switch (cmd.type) {
-      case "cmd/github.session.get": {
-        try {
-          const session = cmd.interactive
-            ? await getGitHubSession({
-                interactive: true,
-                ...(cmd.clearSessionPreference ? { clearSessionPreference: true } : {}),
-              })
-            : await getGitHubSession({ interactive: false });
-          const nowMs = Date.now();
-          return session
-            ? { type: "github/session.result", ok: true, session, nowMs }
-            : { type: "github/session.result", ok: false, nowMs };
-        } catch (err) {
-          return { type: "github/session.result", ok: false, nowMs: Date.now(), error: err };
-        }
-      }
-
-      case "cmd/auth.exchange": {
-        const result = await exchangeSession(cmd.backendUrl, cmd.accessToken);
-        return result.ok
-          ? { type: "auth/exchange.result", ok: true, session: result.session }
-          : { type: "auth/exchange.result", ok: false, error: result.error };
-      }
-
-      case "cmd/ws.open": {
-        this.closeSocket(1000, "reconnect");
-
-        const wsUrl = cmd.backendUrl.replace(/^http/, "ws") + "/ws";
-        const result = await openWebSocket({
-          wsUrl,
-          token: cmd.token,
-          onClose: (ws, code, reason) => this.onWsClose(ws, code, reason),
-          onMessage: (ws, text) => this.onWsMessage(ws, text),
-          onError: (ws, err) => this.onWsError(ws, err),
-        });
-
-        if (!result.ok) {
-          if (result.error.type === "handshake_http_error") {
-            const parts = [`HTTP ${result.error.status}`];
-            if (typeof result.error.retryAfterMs === "number") {
-              parts.push(`retryAfterMs=${result.error.retryAfterMs}`);
-            }
-            if (typeof result.error.bodyText === "string" && result.error.bodyText.length > 0) {
-              const preview = result.error.bodyText.replaceAll(/\s+/g, " ").slice(0, 200);
-              parts.push(`body="${preview}"`);
-            }
-            this.output.warn(`WebSocket handshake failed: ${parts.join(" ")}`);
-          }
-          return { type: "ws/open.result", ok: false, error: result.error, cause: result.cause };
-        }
-
-        this.ws = result.ws;
-        this.wsHeartbeat = startWsHeartbeat({
-          ws: result.ws,
-          pingIntervalMs: WS_PING_INTERVAL_MS,
-          pongTimeoutMs: WS_PONG_TIMEOUT_MS,
-          onTimeout: ({ elapsedSinceLastPongMs }) => {
-            this.output.warn(
-              `WebSocket heartbeat timeout (no pong for ${elapsedSinceLastPongMs}ms). Terminating.`,
-            );
-          },
-        });
-
-        try {
-          result.ws.send(
-            JSON.stringify({
-              version: PROTOCOL_VERSION,
-              type: "client/hello",
-              client: { name: "vscode", version: vscode.version },
-            } satisfies ClientEvent),
-          );
-        } catch (err) {
-          this.output.warn(`WebSocket hello failed: ${String(err)}`);
-        }
-
-        return { type: "ws/open.result", ok: true };
-      }
-
-      case "cmd/ws.close": {
+      case "cmd/github.session.get":
+        return this.executeGithubSessionGet(cmd);
+      case "cmd/auth.exchange":
+        return this.executeAuthExchange(cmd);
+      case "cmd/ws.open":
+        return this.executeWsOpen(cmd);
+      case "cmd/ws.close":
         this.closeSocket(cmd.code, cmd.reason);
         return;
-      }
-
-      case "cmd/reconnect.cancel": {
+      case "cmd/reconnect.cancel":
         cancelReconnectTimer(this.reconnectTimer);
         this.reconnectTimer = undefined;
         return;
-      }
-
-      case "cmd/reconnect.schedule": {
+      case "cmd/reconnect.schedule":
         if (this.reconnectTimer) return;
         this.reconnectTimer = scheduleReconnectTimer(cmd.delayMs, () => this.onReconnectTimer());
         return;
-      }
-
-      case "cmd/telemetry.send": {
+      case "cmd/telemetry.send":
+        if (cmd.event.name === "vscodeChat.ws.legacy_fallback") {
+          this.emitLegacyFallbackDiagnostic(cmd.event);
+        }
         this.telemetry?.send(cmd.event);
         return;
-      }
-
-      case "cmd/raise": {
+      case "cmd/raise":
         throw cmd.error;
-      }
+    }
+  }
+
+  private async executeGithubSessionGet(
+    cmd: Extract<ChatClientCoreCommand, { type: "cmd/github.session.get" }>,
+  ): Promise<ChatClientCoreEvent> {
+    try {
+      const session = cmd.interactive
+        ? await getGitHubSession({
+            interactive: true,
+            ...(cmd.clearSessionPreference ? { clearSessionPreference: true } : {}),
+          })
+        : await getGitHubSession({ interactive: false });
+
+      const nowMs = Date.now();
+      return session
+        ? { type: "github/session.result", ok: true, session, nowMs }
+        : { type: "github/session.result", ok: false, nowMs };
+    } catch (err) {
+      return { type: "github/session.result", ok: false, nowMs: Date.now(), error: err };
+    }
+  }
+
+  private async executeAuthExchange(
+    cmd: Extract<ChatClientCoreCommand, { type: "cmd/auth.exchange" }>,
+  ): Promise<ChatClientCoreEvent> {
+    const result = await exchangeSession(cmd.backendUrl, cmd.accessToken);
+    return result.ok
+      ? { type: "auth/exchange.result", ok: true, session: result.session }
+      : { type: "auth/exchange.result", ok: false, error: result.error };
+  }
+
+  private async executeWsOpen(
+    cmd: Extract<ChatClientCoreCommand, { type: "cmd/ws.open" }>,
+  ): Promise<ChatClientCoreEvent> {
+    this.closeSocket(1000, "reconnect");
+
+    const wsUrl = this.buildWsUrl(cmd.backendUrl);
+    const result = await openWebSocket({
+      wsUrl,
+      token: cmd.token,
+      ...this.createWsOpenCallbacks(),
+    });
+
+    if (!result.ok) {
+      this.logHandshakeError(result.error);
+      return { type: "ws/open.result", ok: false, error: result.error, cause: result.cause };
+    }
+
+    this.attachOpenedSocket(result.ws);
+
+    return { type: "ws/open.result", ok: true };
+  }
+
+  private buildWsUrl(backendUrl: string): string {
+    return backendUrl.replace(/^http/, "ws") + "/ws";
+  }
+
+  private createWsOpenCallbacks(): {
+    onClose: (ws: WebSocket, code: number, reason: string) => void;
+    onMessage: (ws: WebSocket, text: string) => void;
+    onError: (ws: WebSocket, err: unknown) => void;
+  } {
+    return {
+      onClose: (ws, code, reason) => this.onWsClose(ws, code, reason),
+      onMessage: (ws, text) => this.onWsMessage(ws, text),
+      onError: (ws, err) => this.onWsError(ws, err),
+    };
+  }
+
+  private attachOpenedSocket(ws: WebSocket): void {
+    this.ws = ws;
+    this.wsHeartbeat = startWsHeartbeat({
+      ws,
+      pingIntervalMs: WS_PING_INTERVAL_MS,
+      pongTimeoutMs: WS_PONG_TIMEOUT_MS,
+      onTimeout: ({ elapsedSinceLastPongMs }) => {
+        this.output.warn(
+          `WebSocket heartbeat timeout (no pong for ${elapsedSinceLastPongMs}ms). Terminating.`,
+        );
+      },
+    });
+
+    this.trySendWsHello(ws);
+  }
+
+  private logHandshakeError(error: WsOpenError): void {
+    if (error.type !== "handshake_http_error") return;
+    const parts = [`HTTP ${error.status}`];
+    if (typeof error.retryAfterMs === "number") parts.push(`retryAfterMs=${error.retryAfterMs}`);
+    const preview = error.bodyText?.trim();
+    if (preview) parts.push(`body="${preview.replaceAll(/\s+/g, " ").slice(0, 200)}"`);
+    this.output.warn(`WebSocket handshake failed: ${parts.join(" ")}`);
+  }
+
+  private trySendWsHello(ws: WebSocket): void {
+    try {
+      ws.send(
+        JSON.stringify({
+          version: PROTOCOL_VERSION,
+          type: "client/hello",
+          client: { name: "vscode", version: vscode.version },
+        } satisfies ClientEvent),
+      );
+    } catch (err) {
+      this.output.warn(`WebSocket hello failed: ${String(err)}`);
     }
   }
 
@@ -429,9 +458,7 @@ export class ChatClient implements vscode.Disposable {
     this.suppressedReconnect.add(ws);
     try {
       ws.close(code, reason);
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   private onWsError(ws: WebSocket, err: unknown): void {
@@ -509,5 +536,20 @@ export class ChatClient implements vscode.Disposable {
   private stopWsHeartbeat(): void {
     this.wsHeartbeat?.stop();
     this.wsHeartbeat = undefined;
+  }
+
+  private emitLegacyFallbackDiagnostic(event: {
+    fallback: "handshake_429_body";
+    kind: "rate_limited" | "room_full" | "too_many_connections" | "unknown";
+  }): void {
+    this.output.info(
+      `ws fallback diagnostic: ${JSON.stringify({
+        boundary: "ws.handshake.fallback",
+        phase: "classify_429",
+        outcome: "legacy_fallback",
+        fallback: event.fallback,
+        kind: event.kind,
+      })}`,
+    );
   }
 }

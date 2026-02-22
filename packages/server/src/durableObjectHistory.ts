@@ -8,11 +8,7 @@ export type DurableObjectHistoryConfig = Readonly<{
 }>;
 
 export class DurableObjectHistory<T> {
-  /**
-   * Invariant: `ready` MUST be awaited before calling `snapshot()` or `append()`.
-   * This ensures the in-memory state is derived from the latest persisted snapshot.
-   */
-  readonly ready: Promise<void>;
+  private readyPromise: Promise<void> | undefined;
 
   private history: T[] = [];
   private pendingPersistCount = 0;
@@ -22,8 +18,11 @@ export class DurableObjectHistory<T> {
     private readonly storageKey: string,
     private readonly itemSchema: ZodType<T, ZodTypeDef, unknown>,
     private readonly config: DurableObjectHistoryConfig,
-  ) {
-    this.ready = this.load();
+  ) {}
+
+  get ready(): Promise<void> {
+    this.readyPromise ??= this.load();
+    return this.readyPromise;
   }
 
   snapshot(): T[] {

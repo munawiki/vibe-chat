@@ -81,7 +81,8 @@
     "build": "node ./esbuild.mjs",
     "watch": "node ./esbuild.mjs --watch",
     "lint": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.webview.json --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage --coverage.provider=v8 --coverage.reporter=lcov --coverage.reporter=text-summary"
   },
   "dependencies": {
     "@speed-highlight/core": "^1.2.12",
@@ -97,8 +98,10 @@
     "@types/node": "^22.10.5",
     "@types/vscode": "^1.90.0",
     "@types/ws": "^8.5.12",
+    "@vitest/coverage-v8": "^4.0.18",
     "esbuild": "^0.27.0",
+    "happy-dom": "^20.3.9",
     "typescript": "^5.7.3",
-    "vitest": "^4.0.16"
+    "vitest": "^4.0.18"
   }
 }

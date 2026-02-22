@@ -52,29 +52,6 @@ body {
    - `.composer` must remain auto-sized at the bottom, regardless of which optional panels are hidden. */
 .header {
   grid-row: 1;
-}
-
-.channelTabs {
-  grid-row: 2;
-}
-
-.dmPanel {
-  grid-row: 3;
-}
-
-.messages {
-  grid-row: 4;
-}
-
-.composer {
-  grid-row: 5;
-}
-
-.error {
-  grid-row: 6;
-}
-
-.header {
   padding: 10px 12px;
   border-bottom: 1px solid var(--vscode-editorWidget-border);
   display: flex;
@@ -283,6 +260,7 @@ body {
 }
 
 .channelTabs {
+  grid-row: 2;
   padding: 6px 12px 8px;
   border-bottom: 1px solid var(--vscode-editorWidget-border);
   display: flex;
@@ -312,6 +290,7 @@ body {
 }
 
 .dmPanel {
+  grid-row: 3;
   padding: 8px 12px;
   border-bottom: 1px solid var(--vscode-editorWidget-border);
   display: flex;
@@ -408,6 +387,7 @@ button:disabled {
 }
 
 .messages {
+  grid-row: 4;
   padding: 10px 12px;
   overflow: auto;
   display: flex;
@@ -615,6 +595,7 @@ button:disabled {
 }
 
 .composer {
+  grid-row: 5;
   padding: 10px 12px;
   border-top: 1px solid var(--vscode-editorWidget-border);
   display: grid;
@@ -652,6 +633,7 @@ button:disabled {
 }
 
 .error {
+  grid-row: 6;
   color: var(--vscode-errorForeground);
   font-size: 12px;
   padding: 0 12px 10px;

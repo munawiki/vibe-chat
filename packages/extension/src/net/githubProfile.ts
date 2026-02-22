@@ -141,8 +141,8 @@ async function fetchGitHubProfile(options: {
   let response: Response;
   try {
     response = await options.fetchImpl(url, { headers });
-  } catch (cause: unknown) {
-    return { ok: false, error: { type: "network_error", cause } };
+  } catch (error_: unknown) {
+    return { ok: false, error: { type: "network_error", cause: error_ } };
   }
 
   if (!response.ok) return { ok: false, error: { type: "fetch_failed", status: response.status } };
@@ -170,19 +170,20 @@ async function fetchGitHubProfile(options: {
 
   return {
     ok: true,
-    profile: {
-      ...base,
-      ...(api.name !== undefined ? { name: api.name } : {}),
-      ...(api.bio !== undefined ? { bio: api.bio } : {}),
-      ...(api.company !== undefined ? { company: api.company } : {}),
-      ...(api.location !== undefined ? { location: api.location } : {}),
-      ...(api.blog !== undefined ? { blog: api.blog } : {}),
-      ...(api.twitter_username !== undefined ? { twitterUsername: api.twitter_username } : {}),
-      ...(api.public_repos !== undefined ? { publicRepos: api.public_repos } : {}),
-      ...(api.followers !== undefined ? { followers: api.followers } : {}),
-      ...(api.following !== undefined ? { following: api.following } : {}),
-      ...(api.created_at !== undefined ? { createdAt: api.created_at } : {}),
-      ...(api.updated_at !== undefined ? { updatedAt: api.updated_at } : {}),
-    },
+    profile: (() => {
+      const profile: GitHubProfile = { ...base };
+      if (api.name !== undefined) profile.name = api.name;
+      if (api.bio !== undefined) profile.bio = api.bio;
+      if (api.company !== undefined) profile.company = api.company;
+      if (api.location !== undefined) profile.location = api.location;
+      if (api.blog !== undefined) profile.blog = api.blog;
+      if (api.twitter_username !== undefined) profile.twitterUsername = api.twitter_username;
+      if (api.public_repos !== undefined) profile.publicRepos = api.public_repos;
+      if (api.followers !== undefined) profile.followers = api.followers;
+      if (api.following !== undefined) profile.following = api.following;
+      if (api.created_at !== undefined) profile.createdAt = api.created_at;
+      if (api.updated_at !== undefined) profile.updatedAt = api.updated_at;
+      return profile;
+    })(),
   };
 }

@@ -10,10 +10,15 @@ class_name = "ChatRoom"
 name = "DM_ROOM"
 class_name = "DmRoom"
 
+# Durable Object migration policy:
+# - additive-first class introduction
+# - never delete/rename an existing class in the same rollout
+# - each new tag must carry explicit rollback assumptions in docs/RUNBOOK.md
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ChatRoom"]
 
+# v2 introduces DM storage as a separate class while preserving v1 ChatRoom compatibility.
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["DmRoom"]

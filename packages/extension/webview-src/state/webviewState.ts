@@ -13,18 +13,6 @@ export type OutboxEntry = {
   phase: "pending" | "error";
   errorMessage?: string;
 };
-
-/**
- * Centralized, mutable Webview runtime state.
- *
- * Why:
- * - The Webview is inherently event-driven (UI events + Extension messages).
- * - A single state object keeps mutations localized and makes feature modules easier to reason about.
- *
- * Invariants:
- * - `activeProfileKey` is the lower-cased `activeProfileLogin` (when a profile is active).
- * - `activeOverlay` describes the single visible modal overlay (if any).
- */
 export type WebviewState = {
   activeChannel: "global" | "dm";
   activeDmId: DmId | null;

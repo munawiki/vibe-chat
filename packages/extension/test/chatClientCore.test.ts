@@ -212,6 +212,29 @@ describe("chatClientCore", () => {
       reconnectAttempt: 3,
       error: { type: "handshake_http_error", status: 429, bodyText: "Too many connections" },
       expectedReconnectAttempt: 3,
+      expectedCommands: [
+        handshake429ConnectTelemetry,
+        {
+          type: "cmd/telemetry.send",
+          event: {
+            name: "vscodeChat.ws.legacy_fallback",
+            fallback: "handshake_429_body",
+            kind: "too_many_connections",
+          },
+        },
+        { type: "cmd/reconnect.cancel" },
+      ],
+    },
+    {
+      name: "prefers structured 429 code over legacy body when both are present",
+      reconnectAttempt: 3,
+      error: {
+        type: "handshake_http_error",
+        status: 429,
+        handshakeRejection: { code: "room_full", message: "Room is full" },
+        bodyText: "Too many connection attempts",
+      },
+      expectedReconnectAttempt: 3,
       expectedCommands: [handshake429ConnectTelemetry, { type: "cmd/reconnect.cancel" }],
     },
   ])(

@@ -162,7 +162,12 @@ export type TelemetryEvent =
       usedCachedSession: boolean;
       recovered: boolean;
     }
-  | { name: "vscodeChat.ws.reconnect_scheduled"; attempt: number; delayMs: number };
+  | { name: "vscodeChat.ws.reconnect_scheduled"; attempt: number; delayMs: number }
+  | {
+      name: "vscodeChat.ws.legacy_fallback";
+      fallback: "handshake_429_body";
+      kind: "rate_limited" | "room_full" | "too_many_connections" | "unknown";
+    };
 
 export type ChatClientCoreCommand =
   | { type: "cmd/github.session.get"; interactive: boolean; clearSessionPreference?: boolean }

@@ -272,14 +272,6 @@ export function addMessage(ctx: WebviewContext, message: RenderableMessage): voi
   scrollMessagesToBottom(ctx);
 }
 
-/**
- * Why:
- * - IME composition can report `Enter` as `key="Process"` (not `"Enter"`), so relying on `key` alone
- *   can miss the user's "send" intent and force an extra Enter press after composition ends.
- *
- * Invariants:
- * - `Shift+Enter` is reserved for newline (must NOT send).
- */
 export function isComposerSendKeydown(
   e: Pick<KeyboardEvent, "key" | "code" | "shiftKey">,
 ): boolean {
@@ -322,9 +314,6 @@ export function bindChatUiEvents(ctx: WebviewContext): void {
       if (!ctx.state.sendPendingAfterComposition) return;
       ctx.state.sendPendingAfterComposition = false;
       ctx.state.suppressEnterUntilMs = Date.now() + 100;
-      // Why `setTimeout(0)` (macrotask) instead of a microtask:
-      // - Some IME implementations commit the final composed text *after* `compositionend` but *before* the next task.
-      // - If we read `textarea.value` in a microtask, we can observe a stale value and drop the send, forcing an extra Enter.
       setTimeout(() => sendCurrent(ctx), 0);
     });
     ctx.els.input.addEventListener("keydown", (e) => {

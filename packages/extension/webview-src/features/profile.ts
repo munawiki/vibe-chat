@@ -10,6 +10,61 @@ import type {
 import type { WebviewContext } from "../app/types.js";
 import { closeOverlay, openOverlay } from "./overlay.js";
 
+function isSameGithubUserId(a: string | null, b: string | null): boolean {
+  return a !== null && b !== null && a === b;
+}
+
+function isDeniedBySet(userId: string | null, set: ReadonlySet<string>): boolean {
+  return userId !== null && set.has(userId);
+}
+
+function canModerateProfile(options: {
+  signedInIsModerator: boolean;
+  activeProfileGithubUserId: string | null;
+  isOwnProfile: boolean;
+  isOperatorDenied: boolean;
+}): boolean {
+  if (!options.signedInIsModerator) return false;
+  if (options.activeProfileGithubUserId === null) return false;
+  if (options.isOwnProfile) return false;
+  if (options.isOperatorDenied) return false;
+  return true;
+}
+
+function canMessageProfile(options: {
+  isConnected: boolean;
+  activeProfileGithubUserId: string | null;
+  isOwnProfile: boolean;
+}): boolean {
+  if (!options.isConnected) return false;
+  if (options.activeProfileGithubUserId === null) return false;
+  if (options.isOwnProfile) return false;
+  return true;
+}
+
+function moderationStatusText(options: {
+  action: ExtModerationActionMsg | null;
+  shouldShowModeratorStatus: boolean;
+  isOperatorDenied: boolean;
+  isRoomDenied: boolean;
+}): string {
+  const action = options.action;
+  if (action?.phase === "pending") {
+    return action.action === "deny" ? "Banning..." : "Unbanning...";
+  }
+  if (action?.phase === "success") {
+    return action.action === "deny" ? "Banned." : "Unbanned.";
+  }
+  if (action?.phase === "error") {
+    return action.message ?? "Moderation action failed.";
+  }
+
+  if (!options.shouldShowModeratorStatus) return "";
+  if (options.isOperatorDenied) return "Blocked by operator policy.";
+  if (options.isRoomDenied) return "Banned from this room.";
+  return "";
+}
+
 function setProfileError(ctx: WebviewContext, text: string): void {
   const el = ctx.els.profileError;
   if (!el) return;
@@ -40,6 +95,18 @@ function setProfileAvatar(ctx: WebviewContext, login: string, avatarUrl: string 
   ctx.els.profileAvatar.src = avatarUrl ?? "";
 }
 
+function appendProfileDetail(
+  fragment: DocumentFragment,
+  className: string,
+  text: string | null | undefined,
+): void {
+  if (!text) return;
+  const el = document.createElement("div");
+  el.className = className;
+  el.textContent = text;
+  fragment.appendChild(el);
+}
+
 function renderProfileLoading(
   ctx: WebviewContext,
   login: string,
@@ -62,42 +129,19 @@ function renderProfile(ctx: WebviewContext, profile: ExtProfileResultMsg["profil
   ctx.state.activeProfileGithubUserId = profile.githubUserId;
   if (ctx.els.profileName) ctx.els.profileName.textContent = profile.name ?? "";
   if (ctx.els.profileLogin) ctx.els.profileLogin.textContent = profile.login;
-  if (ctx.els.profileBody) {
-    const fragment = document.createDocumentFragment();
-
-    if (profile.bio) {
-      const bio = document.createElement("div");
-      bio.className = "profileBio";
-      bio.textContent = profile.bio;
-      fragment.appendChild(bio);
-    }
-
-    if (profile.company) {
-      const company = document.createElement("div");
-      company.className = "profileDetail";
-      company.textContent = profile.company;
-      fragment.appendChild(company);
-    }
-
-    if (profile.location) {
-      const location = document.createElement("div");
-      location.className = "profileDetail";
-      location.textContent = profile.location;
-      fragment.appendChild(location);
-    }
-
-    if (profile.blog) {
-      const blog = document.createElement("div");
-      blog.className = "profileDetail";
-      blog.textContent = profile.blog;
-      fragment.appendChild(blog);
-    }
-
-    ctx.els.profileBody.replaceChildren(fragment);
-  }
+  if (ctx.els.profileBody) ctx.els.profileBody.replaceChildren(buildProfileBody(profile));
 
   setProfileAvatar(ctx, profile.login, profile.avatarUrl);
   renderProfileModerationControls(ctx);
+}
+
+function buildProfileBody(profile: ExtProfileResultMsg["profile"]): DocumentFragment {
+  const fragment = document.createDocumentFragment();
+  appendProfileDetail(fragment, "profileBio", profile.bio);
+  appendProfileDetail(fragment, "profileDetail", profile.company);
+  appendProfileDetail(fragment, "profileDetail", profile.location);
+  appendProfileDetail(fragment, "profileDetail", profile.blog);
+  return fragment;
 }
 
 export function openProfile(
@@ -127,21 +171,22 @@ export function bindProfileOpen(
 export function renderProfileModerationControls(ctx: WebviewContext): void {
   const activeProfileGithubUserId = ctx.state.activeProfileGithubUserId;
 
-  const isOwnProfile =
-    ctx.state.signedInGithubUserId !== null &&
-    activeProfileGithubUserId === ctx.state.signedInGithubUserId;
-  const isOperatorDenied =
-    activeProfileGithubUserId !== null &&
-    ctx.state.operatorDeniedGithubUserIds.has(activeProfileGithubUserId);
-  const isRoomDenied =
-    activeProfileGithubUserId !== null &&
-    ctx.state.roomDeniedGithubUserIds.has(activeProfileGithubUserId);
+  const isOwnProfile = isSameGithubUserId(
+    activeProfileGithubUserId,
+    ctx.state.signedInGithubUserId,
+  );
+  const isOperatorDenied = isDeniedBySet(
+    activeProfileGithubUserId,
+    ctx.state.operatorDeniedGithubUserIds,
+  );
+  const isRoomDenied = isDeniedBySet(activeProfileGithubUserId, ctx.state.roomDeniedGithubUserIds);
 
-  const canModerate =
-    ctx.state.signedInIsModerator &&
-    activeProfileGithubUserId !== null &&
-    !isOwnProfile &&
-    !isOperatorDenied;
+  const canModerate = canModerateProfile({
+    signedInIsModerator: ctx.state.signedInIsModerator,
+    activeProfileGithubUserId,
+    isOwnProfile,
+    isOperatorDenied,
+  });
   const shouldShowModeratorStatus =
     ctx.state.signedInIsModerator && activeProfileGithubUserId !== null && !isOwnProfile;
 
@@ -149,7 +194,11 @@ export function renderProfileModerationControls(ctx: WebviewContext): void {
   if (ctx.els.profileBan) ctx.els.profileBan.hidden = !canModerate || isRoomDenied;
   if (ctx.els.profileUnban) ctx.els.profileUnban.hidden = !canModerate || !isRoomDenied;
 
-  const canMessage = ctx.state.isConnected && activeProfileGithubUserId !== null && !isOwnProfile;
+  const canMessage = canMessageProfile({
+    isConnected: ctx.state.isConnected,
+    activeProfileGithubUserId,
+    isOwnProfile,
+  });
   if (ctx.els.profileMessage) {
     ctx.els.profileMessage.hidden = !canMessage;
     ctx.els.profileMessage.disabled = !canMessage;
@@ -161,18 +210,12 @@ export function renderProfileModerationControls(ctx: WebviewContext): void {
     ctx.els.profileSignOut.disabled = !canSignOut;
   }
 
-  let statusText = "";
-  const action = ctx.state.moderationAction;
-  if (action?.phase === "pending") {
-    statusText = action.action === "deny" ? "Banning..." : "Unbanning...";
-  } else if (action?.phase === "success") {
-    statusText = action.action === "deny" ? "Banned." : "Unbanned.";
-  } else if (action?.phase === "error") {
-    statusText = action.message ?? "Moderation action failed.";
-  } else if (shouldShowModeratorStatus) {
-    if (isOperatorDenied) statusText = "Blocked by operator policy.";
-    else if (isRoomDenied) statusText = "Banned from this room.";
-  }
+  const statusText = moderationStatusText({
+    action: ctx.state.moderationAction,
+    shouldShowModeratorStatus,
+    isOperatorDenied,
+    isRoomDenied,
+  });
 
   setProfileModStatus(ctx, statusText);
 }

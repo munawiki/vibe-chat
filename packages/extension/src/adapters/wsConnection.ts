@@ -18,15 +18,15 @@ export async function openWebSocket(options: {
   });
 
   const openResult = await waitForWsOpenOrHandshakeError(ws);
-  if (!openResult.ok) return openResult;
-
-  // Post-open handlers: these must not influence the "handshake" result.
-  ws.on("close", (code, reason) => options.onClose(ws, code, reason.toString()));
-  ws.on("message", (data) => {
-    const text = rawDataToUtf8(data);
-    options.onMessage(ws, text);
-  });
-  ws.on("error", (err) => options.onError(ws, err));
+  if (openResult.ok) {
+    // Post-open handlers: these must not influence the "handshake" result.
+    ws.on("close", (code, reason) => options.onClose(ws, code, reason.toString()));
+    ws.on("message", (data) => {
+      const text = rawDataToUtf8(data);
+      options.onMessage(ws, text);
+    });
+    ws.on("error", (err) => options.onError(ws, err));
+  }
 
   return openResult;
 }
@@ -62,9 +62,7 @@ function waitForWsOpenOrHandshakeError(ws: WebSocket): Promise<WsOpenResult> {
       const cleanupAndSettle = (bodyText?: string) => {
         try {
           ws.terminate();
-        } catch {
-          // ignore
-        }
+        } catch {}
 
         const handshakeRejection =
           typeof bodyText === "string" ? parseWsHandshakeRejection(bodyText) : undefined;
@@ -85,7 +83,7 @@ function waitForWsOpenOrHandshakeError(ws: WebSocket): Promise<WsOpenResult> {
 
       void readResponseBodyText(response, { maxBytes: 1024, timeoutMs: 1_000 })
         .then((bodyText) => cleanupAndSettle(bodyText))
-        .catch(() => cleanupAndSettle(undefined));
+        .catch(() => cleanupAndSettle());
     };
 
     const onError = (err: unknown) => {
@@ -143,7 +141,7 @@ function parseRetryAfterMs(value: string | string[] | undefined): number | undef
   if (!Number.isFinite(dateMs)) return undefined;
 
   const deltaMs = dateMs - Date.now();
-  return deltaMs > 0 ? deltaMs : 0;
+  return Math.max(deltaMs, 0);
 }
 
 function readResponseBodyText(
@@ -201,9 +199,7 @@ function readResponseBodyText(
       try {
         // Ensure the stream is drained and does not leak resources.
         response.resume();
-      } catch {
-        // ignore
-      }
+      } catch {}
     };
 
     response.on("data", onData);
@@ -211,9 +207,7 @@ function readResponseBodyText(
     response.on("error", onError);
     try {
       response.resume();
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 }
 

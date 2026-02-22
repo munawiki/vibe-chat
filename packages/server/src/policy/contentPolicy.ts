@@ -1,8 +1,17 @@
-const ZERO_WIDTH_RE = /[\u200B\u200C\u200D\uFEFF]/g;
 const STRIP_RE = /[\p{Z}\p{P}\p{S}]/gu;
 
+const ZERO_WIDTH_CHARS = ["\u200B", "\u200C", "\u200D", "\uFEFF"] as const;
+
+function stripZeroWidth(text: string): string {
+  let out = text;
+  for (const ch of ZERO_WIDTH_CHARS) {
+    out = out.replaceAll(ch, "");
+  }
+  return out;
+}
+
 export function normalizeContentText(text: string): string {
-  return text.normalize("NFKC").toLowerCase().replace(ZERO_WIDTH_RE, "").replace(STRIP_RE, "");
+  return stripZeroWidth(text.normalize("NFKC").toLowerCase()).replaceAll(STRIP_RE, "");
 }
 
 export function compileDenylist(denylist: ReadonlyArray<string>): ReadonlyArray<string> {

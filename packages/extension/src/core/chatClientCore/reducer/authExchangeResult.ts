@@ -12,7 +12,7 @@ export function handleAuthExchangeResult(
   event: Extract<ChatClientCoreEvent, { type: "auth/exchange.result" }>,
 ): ReduceResult {
   const pending = state.pending;
-  if (!pending || pending.type !== "pending/connect.exchange") return { state, commands: [] };
+  if (pending?.type !== "pending/connect.exchange") return { state, commands: [] };
 
   if (!event.ok) {
     const commands: ChatClientCoreCommand[] = [];
@@ -41,8 +41,10 @@ export function handleAuthExchangeResult(
     const shouldSignOut =
       event.error.type === "http" && (event.error.status === 401 || event.error.status === 403);
     if (shouldSignOut) {
-      commands.push({ type: "cmd/reconnect.cancel" });
-      commands.push({ type: "cmd/ws.close", code: 1000, reason: "auth_signed_out" });
+      commands.push(
+        { type: "cmd/reconnect.cancel" },
+        { type: "cmd/ws.close", code: 1000, reason: "auth_signed_out" },
+      );
       if (pending.origin === "user")
         commands.push({ type: "cmd/raise", error: new Error("auth_exchange_http_error") });
 

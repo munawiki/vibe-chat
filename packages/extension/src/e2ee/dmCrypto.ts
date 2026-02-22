@@ -13,6 +13,13 @@ export type DmKeypair = {
   secretKeyBase64: string;
 };
 
+export type DmSecretMigrationDiagnostic = {
+  boundary: "dm.secret.migration";
+  phase: "persist_v2" | "cleanup_v1";
+  outcome: "ok" | "failed" | "skipped";
+  errorClass?: "persist_v2_failed" | "cleanup_v1_failed";
+};
+
 function bytesToBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
 }
@@ -28,6 +35,7 @@ export async function getOrCreateDmKeypair(options: {
     store(key: string, value: string): Thenable<void>;
     delete?(key: string): Thenable<void>;
   };
+  onDiagnostic?: (event: DmSecretMigrationDiagnostic) => void;
 }): Promise<DmKeypair> {
   const v2Key = dmSecretStorageKeyV2(options.githubUserId);
 
@@ -36,8 +44,47 @@ export async function getOrCreateDmKeypair(options: {
     const v1 = await options.secrets.get(DM_SECRET_STORAGE_KEY_V1);
     if (v1) {
       stored = v1;
-      await options.secrets.store(v2Key, v1);
-      await options.secrets.delete?.(DM_SECRET_STORAGE_KEY_V1);
+      try {
+        await options.secrets.store(v2Key, v1);
+        options.onDiagnostic?.({
+          boundary: "dm.secret.migration",
+          phase: "persist_v2",
+          outcome: "ok",
+        });
+      } catch (err) {
+        options.onDiagnostic?.({
+          boundary: "dm.secret.migration",
+          phase: "persist_v2",
+          outcome: "failed",
+          errorClass: "persist_v2_failed",
+        });
+        throw err;
+      }
+
+      if (options.secrets.delete) {
+        try {
+          // Cleanup is best-effort and runs only after destination persistence succeeds.
+          await options.secrets.delete(DM_SECRET_STORAGE_KEY_V1);
+          options.onDiagnostic?.({
+            boundary: "dm.secret.migration",
+            phase: "cleanup_v1",
+            outcome: "ok",
+          });
+        } catch {
+          options.onDiagnostic?.({
+            boundary: "dm.secret.migration",
+            phase: "cleanup_v1",
+            outcome: "failed",
+            errorClass: "cleanup_v1_failed",
+          });
+        }
+      } else {
+        options.onDiagnostic?.({
+          boundary: "dm.secret.migration",
+          phase: "cleanup_v1",
+          outcome: "skipped",
+        });
+      }
     }
   }
   if (stored) {
@@ -85,12 +132,12 @@ export function decryptDmText(options: {
   const myPublicKey = options.receiverPublicKeyBase64;
   const { senderIdentity, recipientIdentity } = options.message;
 
-  const peerIdentityPublicKey =
-    senderIdentity.publicKey === myPublicKey
-      ? recipientIdentity.publicKey
-      : recipientIdentity.publicKey === myPublicKey
-        ? senderIdentity.publicKey
-        : undefined;
+  let peerIdentityPublicKey: string | undefined;
+  if (senderIdentity.publicKey === myPublicKey) {
+    peerIdentityPublicKey = recipientIdentity.publicKey;
+  } else if (recipientIdentity.publicKey === myPublicKey) {
+    peerIdentityPublicKey = senderIdentity.publicKey;
+  }
   if (!peerIdentityPublicKey) return { ok: false, error: "identity_mismatch" };
 
   const receiverSecretKey = base64ToBytes(options.receiverSecretKeyBase64);

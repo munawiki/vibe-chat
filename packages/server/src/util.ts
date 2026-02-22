@@ -12,8 +12,6 @@ function touchRateLimitKey<K extends string>(
   key: K,
   value: RateWindow,
 ): void {
-  // Invariant: Map iteration order is treated as LRU (oldest-first) for pruning/eviction.
-  // Touching a key MUST move it to the end so expired windows cluster at the front.
   store.delete(key);
   store.set(key, value);
 }
@@ -119,64 +117,117 @@ export async function readRequestJsonWithLimit(
   request: Request,
   options: { maxBytes: number; timeoutMs: number },
 ): Promise<{ ok: true; json: unknown } | { ok: false; error: ReadRequestJsonError }> {
-  const contentLength = request.headers.get("content-length");
-  if (contentLength) {
-    const length = Number(contentLength);
-    if (Number.isFinite(length) && length > options.maxBytes) {
-      return { ok: false, error: "too_large" };
-    }
+  if (isContentLengthTooLarge(request.headers.get("content-length"), options.maxBytes)) {
+    return { ok: false, error: "too_large" };
   }
 
-  const body = request.body;
-  if (!body) return { ok: false, error: "invalid_json" };
+  const bodyBytes = await readRequestBodyBytesWithLimit(request.body, options);
+  if (!bodyBytes.ok) return bodyBytes;
 
-  const reader = body.getReader();
+  const text = decodeRequestBodyText(bodyBytes.bytes);
+  if (!text) return { ok: false, error: "invalid_json" };
 
+  return parseJsonText(text);
+}
+
+function isContentLengthTooLarge(contentLength: string | null, maxBytes: number): boolean {
+  if (!contentLength) return false;
+  const length = Number(contentLength);
+  return Number.isFinite(length) && length > maxBytes;
+}
+
+function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  void reader.cancel().catch(() => {});
+}
+
+function useReaderTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number,
+): { didTimeout: () => boolean; clear: () => void } {
   let timedOut = false;
   const timeout = setTimeout(() => {
     timedOut = true;
-    void reader.cancel().catch(() => {
-      // ignore
-    });
-  }, options.timeoutMs);
+    cancelReader(reader);
+  }, timeoutMs);
 
+  return {
+    didTimeout: () => timedOut,
+    clear: () => clearTimeout(timeout),
+  };
+}
+
+async function readAllChunks(options: {
+  reader: ReadableStreamDefaultReader<Uint8Array>;
+  maxBytes: number;
+  didTimeout: () => boolean;
+}): Promise<
+  { ok: true; bytes: number; chunks: Uint8Array[] } | { ok: false; error: ReadRequestJsonError }
+> {
   const chunks: Uint8Array[] = [];
   let bytes = 0;
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await options.reader.read();
       if (done) break;
       if (!value) continue;
 
       bytes += value.byteLength;
       if (bytes > options.maxBytes) {
-        void reader.cancel().catch(() => {
-          // ignore
-        });
+        cancelReader(options.reader);
         return { ok: false, error: "too_large" };
       }
 
       chunks.push(value);
     }
   } catch {
-    return { ok: false, error: timedOut ? "timeout" : "read_error" };
-  } finally {
-    clearTimeout(timeout);
+    return { ok: false, error: options.didTimeout() ? "timeout" : "read_error" };
   }
 
-  if (chunks.length === 0) return { ok: false, error: "invalid_json" };
+  return { ok: true, bytes, chunks };
+}
 
+function concatChunks(chunks: Uint8Array[], bytes: number): Uint8Array {
   const buffer = new Uint8Array(bytes);
   let offset = 0;
   for (const chunk of chunks) {
     buffer.set(chunk, offset);
     offset += chunk.byteLength;
   }
+  return buffer;
+}
 
-  const text = new TextDecoder().decode(buffer).trim();
-  if (text.length === 0) return { ok: false, error: "invalid_json" };
+async function readRequestBodyBytesWithLimit(
+  body: ReadableStream<Uint8Array> | null,
+  options: { maxBytes: number; timeoutMs: number },
+): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; error: ReadRequestJsonError }> {
+  if (!body) return { ok: false, error: "invalid_json" };
 
+  const reader = body.getReader();
+  const timeout = useReaderTimeout(reader, options.timeoutMs);
+
+  try {
+    const result = await readAllChunks({
+      reader,
+      maxBytes: options.maxBytes,
+      didTimeout: timeout.didTimeout,
+    });
+    if (!result.ok) return result;
+    if (result.chunks.length === 0) return { ok: false, error: "invalid_json" };
+    return { ok: true, bytes: concatChunks(result.chunks, result.bytes) };
+  } finally {
+    timeout.clear();
+  }
+}
+
+function decodeRequestBodyText(bytes: Uint8Array): string | undefined {
+  const text = new TextDecoder().decode(bytes).trim();
+  return text.length > 0 ? text : undefined;
+}
+
+function parseJsonText(
+  text: string,
+): { ok: true; json: unknown } | { ok: false; error: ReadRequestJsonError } {
   try {
     return { ok: true, json: JSON.parse(text) };
   } catch {

@@ -12,8 +12,6 @@ import {
 } from "@vscode-chat/protocol";
 import { GitHubProfileSchema } from "./githubProfile.js";
 
-export { GitHubProfileSchema };
-
 const NonEmptyString = z.string().min(1);
 
 export const UiInboundSchema = z.discriminatedUnion("type", [

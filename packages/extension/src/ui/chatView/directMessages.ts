@@ -1,5 +1,4 @@
 import * as vscode from "vscode";
-import { z } from "zod";
 import type {
   AuthUser,
   DmId,
@@ -8,9 +7,7 @@ import type {
   DmMessagePlain,
   GithubUserId,
 } from "@vscode-chat/protocol";
-import { GithubUserIdSchema } from "@vscode-chat/protocol";
-import type { ChatClientState } from "../../net/chatClient.js";
-import type { ChatClient } from "../../net/chatClient.js";
+import type { ChatClient, ChatClientState } from "../../net/chatClient.js";
 import type {
   ExtDmHistoryMsg,
   ExtDmMessageMsg,
@@ -21,41 +18,45 @@ import {
   encryptDmText,
   getOrCreateDmKeypair,
   type DmKeypair,
+  type DmSecretMigrationDiagnostic,
 } from "../../e2ee/dmCrypto.js";
-
-const TRUSTED_PEER_KEYS_STORAGE_KEY_V1 = "vscodeChat.dm.trustedPeerKeys.v1";
-const TRUSTED_PEER_KEYS_STORAGE_KEY_V2_PREFIX = "vscodeChat.dm.trustedPeerKeys.v2:";
-
-function trustedPeerKeysStorageKeyV2(githubUserId: GithubUserId): string {
-  return `${TRUSTED_PEER_KEYS_STORAGE_KEY_V2_PREFIX}${githubUserId}`;
-}
-
-const TrustedPeerKeysSchema = z.record(z.string(), z.array(z.string().min(1)));
+import {
+  DM_TRUST_WARNING_BLOCKED,
+  applyObservedPeerIdentity,
+  approvePendingPeerIdentity,
+  canSendDm,
+  dmSendBlockedReason,
+  initialDmThreadTrust,
+  toDmThreadView,
+  type DmTrustState,
+  type DmThreadTrust,
+} from "./directMessagesTrustPolicy.js";
+import { DmTrustedKeyStore } from "./directMessagesTrustStore.js";
 
 type DmThread = {
   dmId: DmId;
   peer: AuthUser;
-  peerIdentity?: DmIdentity;
-  pendingPeerIdentity?: DmIdentity;
-  isBlocked: boolean;
-  warning?: string;
+  trust: DmThreadTrust;
 };
 
 export class ChatViewDirectMessages {
+  private static readonly DM_SECRET_MIGRATION_DIAG = "dm secret migration";
+  private static readonly DM_TRUST_TRANSITION_DIAG = "dm trust transition";
+
   private identityPublished = false;
   private keypair: DmKeypair | undefined;
   private signedInGithubUserId: GithubUserId | null = null;
-  private trustedPeerKeysLoadedForGithubUserId: GithubUserId | null = null;
+  private scopeVersion = 0;
 
   private readonly peersByGithubUserId = new Map<GithubUserId, AuthUser>();
   private readonly threadsById = new Map<DmId, DmThread>();
-  private readonly trustedPeerKeysByGithubUserId = new Map<GithubUserId, Set<string>>();
+  private readonly trustedPeerKeys: DmTrustedKeyStore;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly output: vscode.LogOutputChannel,
   ) {
-    // trusted peer keys are loaded lazily per signed-in user id
+    this.trustedPeerKeys = new DmTrustedKeyStore(this.context.globalState, this.output);
   }
 
   reset(): void {
@@ -66,21 +67,19 @@ export class ChatViewDirectMessages {
     this.identityPublished = false;
     this.keypair = undefined;
     this.signedInGithubUserId = null;
-    this.trustedPeerKeysLoadedForGithubUserId = null;
+    this.scopeVersion += 1;
     this.peersByGithubUserId.clear();
     this.threadsById.clear();
-    this.trustedPeerKeysByGithubUserId.clear();
+    this.trustedPeerKeys.reset();
   }
 
   getStateMessage(): ExtDmStateMsg {
     return {
       type: "ext/dm.state",
       threads: [...this.threadsById.values()].map((thread) => ({
+        ...toDmThreadView(thread.trust),
         dmId: thread.dmId,
         peer: thread.peer,
-        isBlocked: thread.isBlocked,
-        canTrustKey: !!thread.pendingPeerIdentity,
-        ...(thread.warning ? { warning: thread.warning } : {}),
       })),
     };
   }
@@ -88,7 +87,9 @@ export class ChatViewDirectMessages {
   async ensureIdentityPublished(client: ChatClient, clientState: ChatClientState): Promise<void> {
     if (this.identityPublished) return;
     if (clientState.authStatus !== "signedIn" || clientState.status !== "connected") return;
-    const keypair = await this.getUserKeypairScoped(clientState.user.githubUserId);
+    const githubUserId = clientState.user.githubUserId;
+    const keypair = await this.getUserKeypairScoped(githubUserId);
+    if (this.signedInGithubUserId !== githubUserId) return;
     client.publishDmIdentity(keypair.identity);
     this.identityPublished = true;
   }
@@ -105,7 +106,6 @@ export class ChatViewDirectMessages {
 
     this.peersByGithubUserId.set(peer.githubUserId, peer);
     client.openDm(peer.githubUserId);
-    return;
   }
 
   handleUiThreadSelect(
@@ -122,7 +122,6 @@ export class ChatViewDirectMessages {
 
     this.peersByGithubUserId.set(thread.peer.githubUserId, thread.peer);
     client.openDm(thread.peer.githubUserId);
-    return;
   }
 
   async handleUiSend(
@@ -137,41 +136,42 @@ export class ChatViewDirectMessages {
 
     const thread = this.threadsById.get(dmId);
     if (!thread) return "Unknown DM thread.";
-    if (thread.isBlocked) return thread.warning ?? "DM is blocked.";
-    if (!thread.peerIdentity) return "Peer key unavailable.";
+    if (!canSendDm(thread.trust)) return dmSendBlockedReason(thread.trust);
+    if (!thread.trust.peerIdentity) return DM_TRUST_WARNING_BLOCKED;
 
     const keypair = await this.getUserKeypairScoped(clientState.user.githubUserId);
     const encrypted = encryptDmText({
       plaintext: text,
       senderSecretKeyBase64: keypair.secretKeyBase64,
       senderIdentity: keypair.identity,
-      recipientIdentity: thread.peerIdentity,
+      recipientIdentity: thread.trust.peerIdentity,
     });
 
     client.sendDmMessage({
       dmId,
       recipientGithubUserId: thread.peer.githubUserId,
       senderIdentity: keypair.identity,
-      recipientIdentity: thread.peerIdentity,
+      recipientIdentity: thread.trust.peerIdentity,
       nonce: encrypted.nonce,
       ciphertext: encrypted.ciphertext,
     });
-
-    return;
   }
 
   async handleUiTrustPeerKey(dmId: DmId): Promise<ExtDmStateMsg | undefined> {
     const thread = this.threadsById.get(dmId);
     if (!thread) return undefined;
 
-    const pending = thread.pendingPeerIdentity;
+    const pending = thread.trust.pendingPeerIdentity;
     if (!pending) return undefined;
 
-    await this.addTrustedPeerKey(thread.peer.githubUserId, pending.publicKey);
-    thread.isBlocked = false;
-    delete thread.warning;
-    thread.peerIdentity = pending;
-    delete thread.pendingPeerIdentity;
+    const prevState = thread.trust.state;
+    await this.trustedPeerKeys.addTrustedPeerKey(thread.peer.githubUserId, pending.publicKey);
+    thread.trust = approvePendingPeerIdentity(thread.trust);
+    this.emitTrustTransitionDiagnostic({
+      phase: "approve_pending",
+      fromState: prevState,
+      toState: thread.trust.state,
+    });
 
     return this.getStateMessage();
   }
@@ -182,6 +182,7 @@ export class ChatViewDirectMessages {
     if (clientState.authStatus !== "signedIn" || clientState.status !== "connected") return;
     const githubUserId = clientState.user.githubUserId;
     const keypair = await this.getUserKeypairScoped(githubUserId);
+    if (this.signedInGithubUserId !== githubUserId) return;
     return { githubUserId, keypair };
   }
 
@@ -198,9 +199,7 @@ export class ChatViewDirectMessages {
     if (!auth) return { outbound: [this.getStateMessage()] };
     const { keypair } = auth;
 
-    const peer =
-      this.peersByGithubUserId.get(options.event.peerGithubUserId) ??
-      this.threadsById.get(options.event.dmId)?.peer;
+    const peer = this.getPeerForWelcome(options.event.dmId, options.event.peerGithubUserId);
     if (!peer) {
       this.output.warn(
         `dm welcome ignored: missing peer for githubUserId=${options.event.peerGithubUserId}`,
@@ -210,25 +209,7 @@ export class ChatViewDirectMessages {
 
     const thread = this.getOrCreateThread(options.event.dmId, peer);
 
-    const peerIdentity = options.event.peerIdentity;
-    if (!peerIdentity) {
-      thread.isBlocked = true;
-      thread.warning = "Peer key unavailable.";
-      delete thread.peerIdentity;
-      delete thread.pendingPeerIdentity;
-    } else {
-      const trust = await this.observePeerKey(peer.githubUserId, peerIdentity);
-      if (!trust.trusted) {
-        thread.isBlocked = true;
-        thread.warning = "Peer key changed. Trust the new key to continue.";
-        thread.pendingPeerIdentity = peerIdentity;
-      } else {
-        thread.peerIdentity = peerIdentity;
-        thread.isBlocked = false;
-        delete thread.warning;
-        delete thread.pendingPeerIdentity;
-      }
-    }
+    await this.applyWelcomePeerIdentity(thread, peer.githubUserId, options.event.peerIdentity);
 
     const decrypted: DmMessagePlain[] = [];
     for (const msg of options.event.history) {
@@ -239,21 +220,9 @@ export class ChatViewDirectMessages {
       });
       if (!decoded.ok) continue;
 
-      const peerKeyPublic = decoded.peerIdentityPublicKey;
-      const peerIdentityFromMsg = pickIdentityByPublicKey(msg, peerKeyPublic);
+      const peerIdentityFromMsg = pickIdentityByPublicKey(msg, decoded.peerIdentityPublicKey);
       if (peerIdentityFromMsg) {
-        const trust = await this.observePeerKey(peer.githubUserId, peerIdentityFromMsg);
-        if (!trust.trusted) {
-          thread.isBlocked = true;
-          thread.warning = "Peer key changed. Trust the new key to continue.";
-          thread.pendingPeerIdentity = peerIdentityFromMsg;
-        } else if (!thread.pendingPeerIdentity) {
-          thread.peerIdentity = peerIdentityFromMsg;
-          if (thread.warning === "Peer key unavailable.") {
-            thread.isBlocked = false;
-            delete thread.warning;
-          }
-        }
+        await this.applyPeerIdentityFromMessage(thread, peer.githubUserId, peerIdentityFromMsg);
       }
 
       decrypted.push({
@@ -269,6 +238,37 @@ export class ChatViewDirectMessages {
       outbound: [this.getStateMessage()],
       history: { type: "ext/dm.history", dmId: options.event.dmId, history: decrypted },
     };
+  }
+
+  private getPeerForWelcome(dmId: DmId, peerGithubUserId: GithubUserId): AuthUser | undefined {
+    return this.peersByGithubUserId.get(peerGithubUserId) ?? this.threadsById.get(dmId)?.peer;
+  }
+
+  private async applyWelcomePeerIdentity(
+    thread: DmThread,
+    peerGithubUserId: GithubUserId,
+    peerIdentity: DmIdentity | undefined,
+  ): Promise<void> {
+    if (!peerIdentity) {
+      const prevState = thread.trust.state;
+      thread.trust = applyObservedPeerIdentity(thread.trust, { kind: "missing" });
+      this.emitTrustTransitionDiagnostic({
+        phase: "observe_peer_identity",
+        fromState: prevState,
+        toState: thread.trust.state,
+      });
+      return;
+    }
+
+    await this.applyObservedPeerIdentity(thread, peerGithubUserId, peerIdentity);
+  }
+
+  private async applyPeerIdentityFromMessage(
+    thread: DmThread,
+    peerGithubUserId: GithubUserId,
+    peerIdentity: DmIdentity,
+  ): Promise<void> {
+    await this.applyObservedPeerIdentity(thread, peerGithubUserId, peerIdentity);
   }
 
   async handleServerMessageNew(options: {
@@ -308,18 +308,7 @@ export class ChatViewDirectMessages {
     const peerKeyPublic = decoded.peerIdentityPublicKey;
     const peerIdentityFromMsg = pickIdentityByPublicKey(msg, peerKeyPublic);
     if (peerIdentityFromMsg) {
-      const trust = await this.observePeerKey(peerGithubUserId, peerIdentityFromMsg);
-      if (!trust.trusted) {
-        thread.isBlocked = true;
-        thread.warning = "Peer key changed. Trust the new key to continue.";
-        thread.pendingPeerIdentity = peerIdentityFromMsg;
-      } else {
-        thread.peerIdentity = peerIdentityFromMsg;
-        if (!thread.pendingPeerIdentity) {
-          thread.isBlocked = false;
-          delete thread.warning;
-        }
-      }
+      await this.applyPeerIdentityFromMessage(thread, peerGithubUserId, peerIdentityFromMsg);
     }
 
     const plaintext: DmMessagePlain = {
@@ -342,15 +331,22 @@ export class ChatViewDirectMessages {
       this.resetAccountState();
     }
     this.signedInGithubUserId = githubUserId;
-    await this.loadTrustedPeerKeys(githubUserId);
+    this.scopeVersion += 1;
+    await this.trustedPeerKeys.ensureScope(githubUserId);
   }
 
   private async getKeypair(githubUserId: GithubUserId): Promise<DmKeypair> {
     if (this.keypair && this.signedInGithubUserId === githubUserId) return this.keypair;
-    this.keypair = await getOrCreateDmKeypair({
+    const scopeVersion = this.scopeVersion;
+    const loaded = await getOrCreateDmKeypair({
       githubUserId,
       secrets: this.context.secrets,
+      onDiagnostic: (event) => this.emitSecretMigrationDiagnostic(event),
     });
+    if (this.signedInGithubUserId !== githubUserId || this.scopeVersion !== scopeVersion) {
+      return loaded;
+    }
+    this.keypair = loaded;
     return this.keypair;
   }
 
@@ -365,76 +361,59 @@ export class ChatViewDirectMessages {
       existing.peer = peer;
       return existing;
     }
-    const created: DmThread = { dmId, peer, isBlocked: false };
+    const created: DmThread = { dmId, peer, trust: initialDmThreadTrust() };
     this.threadsById.set(dmId, created);
     return created;
   }
 
-  private async loadTrustedPeerKeys(githubUserId: GithubUserId): Promise<void> {
-    if (this.trustedPeerKeysLoadedForGithubUserId === githubUserId) return;
-    this.trustedPeerKeysByGithubUserId.clear();
-
-    const v2Key = trustedPeerKeysStorageKeyV2(githubUserId);
-    let raw = this.context.globalState.get<unknown>(v2Key);
-
-    if (raw === undefined) {
-      const v1Raw = this.context.globalState.get<unknown>(TRUSTED_PEER_KEYS_STORAGE_KEY_V1);
-      const v1Parsed = TrustedPeerKeysSchema.safeParse(v1Raw);
-      if (v1Parsed.success) {
-        raw = v1Parsed.data;
-        try {
-          await this.context.globalState.update(v2Key, v1Parsed.data);
-          await this.context.globalState.update(TRUSTED_PEER_KEYS_STORAGE_KEY_V1, undefined);
-        } catch (err) {
-          this.output.warn(`dm trusted keys migration failed: ${String(err)}`);
-        }
-      }
-    }
-
-    const parsed = TrustedPeerKeysSchema.safeParse(raw);
-    if (!parsed.success) {
-      this.trustedPeerKeysLoadedForGithubUserId = githubUserId;
-      return;
-    }
-
-    for (const [githubUserId, keys] of Object.entries(parsed.data)) {
-      const githubUserIdParsed = GithubUserIdSchema.safeParse(githubUserId);
-      if (!githubUserIdParsed.success) continue;
-      this.trustedPeerKeysByGithubUserId.set(githubUserIdParsed.data, new Set(keys));
-    }
-
-    this.trustedPeerKeysLoadedForGithubUserId = githubUserId;
-  }
-
-  private async addTrustedPeerKey(githubUserId: GithubUserId, publicKey: string): Promise<void> {
-    const set = this.trustedPeerKeysByGithubUserId.get(githubUserId) ?? new Set<string>();
-    set.add(publicKey);
-    this.trustedPeerKeysByGithubUserId.set(githubUserId, set);
-    await this.persistTrustedPeerKeys();
-  }
-
-  private async observePeerKey(
-    githubUserId: GithubUserId,
-    identity: DmIdentity,
-  ): Promise<{ trusted: boolean }> {
-    const set = this.trustedPeerKeysByGithubUserId.get(githubUserId);
-    if (!set || set.size === 0) {
-      await this.addTrustedPeerKey(githubUserId, identity.publicKey);
-      return { trusted: true };
-    }
-    return { trusted: set.has(identity.publicKey) };
-  }
-
-  private async persistTrustedPeerKeys(): Promise<void> {
-    if (!this.signedInGithubUserId) return;
-    const out: Record<string, string[]> = {};
-    for (const [githubUserId, keys] of this.trustedPeerKeysByGithubUserId) {
-      out[githubUserId] = [...keys];
-    }
-    await this.context.globalState.update(
-      trustedPeerKeysStorageKeyV2(this.signedInGithubUserId),
-      out,
+  private async applyObservedPeerIdentity(
+    thread: DmThread,
+    peerGithubUserId: GithubUserId,
+    peerIdentity: DmIdentity,
+  ): Promise<void> {
+    const prevState = thread.trust.state;
+    const observed = await this.trustedPeerKeys.observePeerKey(
+      peerGithubUserId,
+      peerIdentity.publicKey,
     );
+    thread.trust = applyObservedPeerIdentity(
+      thread.trust,
+      observed.trusted
+        ? { kind: "trusted", identity: peerIdentity }
+        : { kind: "untrusted", identity: peerIdentity },
+    );
+    this.emitTrustTransitionDiagnostic({
+      phase: "observe_peer_identity",
+      fromState: prevState,
+      toState: thread.trust.state,
+    });
+  }
+
+  private emitSecretMigrationDiagnostic(event: DmSecretMigrationDiagnostic): void {
+    const serialized = JSON.stringify({
+      boundary: event.boundary,
+      phase: event.phase,
+      outcome: event.outcome,
+      ...(event.errorClass ? { errorClass: event.errorClass } : {}),
+    });
+    const text = `${ChatViewDirectMessages.DM_SECRET_MIGRATION_DIAG}: ${serialized}`;
+    if (event.outcome === "failed") this.output.warn(text);
+    else this.output.info(text);
+  }
+
+  private emitTrustTransitionDiagnostic(options: {
+    phase: "observe_peer_identity" | "approve_pending";
+    fromState: DmTrustState;
+    toState: DmTrustState;
+  }): void {
+    const serialized = JSON.stringify({
+      boundary: "dm.trust.transition",
+      phase: options.phase,
+      outcome: options.fromState === options.toState ? "no_change" : "transitioned",
+      fromState: options.fromState,
+      toState: options.toState,
+    });
+    this.output.info(`${ChatViewDirectMessages.DM_TRUST_TRANSITION_DIAG}: ${serialized}`);
   }
 }
 

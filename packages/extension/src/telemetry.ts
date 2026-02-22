@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { TelemetryEventSchema } from "@vscode-chat/protocol";
 import type { TelemetryEvent } from "@vscode-chat/protocol";
+import { stripTrailingSlashes } from "./util/strings.js";
 
 export type ExtensionTelemetry = {
   send(event: TelemetryEvent): void;
@@ -13,7 +14,7 @@ export function createExtensionTelemetry(options: {
 }): ExtensionTelemetry {
   const sender: vscode.TelemetrySender = {
     sendEventData(eventName: string, data?: Record<string, unknown>): void {
-      const candidate = { name: eventName, ...(data ?? {}) };
+      const candidate = data ? { name: eventName, ...data } : { name: eventName };
       const parsed = TelemetryEventSchema.safeParse(candidate);
       if (!parsed.success) {
         options.output.debug(`Dropped unknown telemetry event: ${eventName}`);
@@ -22,7 +23,7 @@ export function createExtensionTelemetry(options: {
 
       const backendUrl = options.getBackendUrl();
       if (!backendUrl) return;
-      const url = `${backendUrl.replace(/\/+$/, "")}/telemetry`;
+      const url = `${stripTrailingSlashes(backendUrl)}/telemetry`;
 
       if (typeof fetch !== "function") return;
 

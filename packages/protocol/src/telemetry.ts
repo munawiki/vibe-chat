@@ -20,9 +20,16 @@ const WebSocketReconnectScheduledEventSchema = z.object({
   delayMs: z.number().int().nonnegative(),
 });
 
+const WebSocketLegacyFallbackEventSchema = z.object({
+  name: z.literal("vscodeChat.ws.legacy_fallback"),
+  fallback: z.literal("handshake_429_body"),
+  kind: z.enum(["rate_limited", "room_full", "too_many_connections", "unknown"]),
+});
+
 export const TelemetryEventSchema = z.discriminatedUnion("name", [
   AuthExchangeEventSchema,
   WebSocketConnectEventSchema,
   WebSocketReconnectScheduledEventSchema,
+  WebSocketLegacyFallbackEventSchema,
 ]);
 export type TelemetryEvent = z.infer<typeof TelemetryEventSchema>;

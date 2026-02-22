@@ -267,6 +267,24 @@ describe("protocol schemas", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts legacy fallback telemetry events", () => {
+    const result = TelemetryEventSchema.safeParse({
+      name: "vscodeChat.ws.legacy_fallback",
+      fallback: "handshake_429_body",
+      kind: "too_many_connections",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects legacy fallback telemetry events with unbounded kind values", () => {
+    const result = TelemetryEventSchema.safeParse({
+      name: "vscodeChat.ws.legacy_fallback",
+      fallback: "handshake_429_body",
+      kind: "other_cluster_shape",
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("accepts ws handshake rejection rate_limited", () => {
     const result = WsHandshakeRejectionSchema.safeParse({
       code: "rate_limited",

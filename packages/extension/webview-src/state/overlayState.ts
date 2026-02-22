@@ -1,14 +1,3 @@
-/**
- * Overlay state is modeled as a single discriminated union.
- *
- * Why:
- * - "At most one overlay is visible" is a UX + accessibility invariant.
- * - Encoding this as a union makes "two overlays open" unrepresentable.
- *
- * Invariants:
- * - `kind: "none"` means no overlay is visible.
- * - `kind: "profile" | "presence"` means exactly that overlay is visible.
- */
 export type OverlayKind = "profile" | "presence";
 
 export type ActiveOverlay = { kind: "none" } | { kind: OverlayKind };

@@ -9,27 +9,36 @@ function classifyHandshake429(error: {
   retryAfterMs?: number;
   bodyText?: string;
   handshakeRejection?: { code: Handshake429Code };
-}): Handshake429Kind {
-  if (error.handshakeRejection?.code) return error.handshakeRejection.code;
-  if (typeof error.retryAfterMs === "number") return "rate_limited";
+}): { kind: Handshake429Kind; source: "typed_code" | "retry_after" | "legacy_body" | "unknown" } {
+  if (error.handshakeRejection?.code) {
+    return { kind: error.handshakeRejection.code, source: "typed_code" };
+  }
+  if (typeof error.retryAfterMs === "number") {
+    return { kind: "rate_limited", source: "retry_after" };
+  }
 
   const body = error.bodyText?.toLowerCase();
-  if (!body) return "unknown";
+  if (!body) return { kind: "unknown", source: "unknown" };
 
   // These strings are the current backend responses (best-effort classification only).
-  if (body.includes("too many connection attempts")) return "rate_limited";
-  if (body.includes("room is full")) return "room_full";
-  if (body.includes("too many connections")) return "too_many_connections";
-  return "unknown";
+  if (body.includes("too many connection attempts")) {
+    return { kind: "rate_limited", source: "legacy_body" };
+  }
+  if (body.includes("room is full")) return { kind: "room_full", source: "legacy_body" };
+  if (body.includes("too many connections")) {
+    return { kind: "too_many_connections", source: "legacy_body" };
+  }
+  return { kind: "unknown", source: "legacy_body" };
 }
 
 function formatHandshake429Message(kind: Handshake429Kind, retryAfterMs?: number): string {
   switch (kind) {
     case "rate_limited": {
-      const seconds = typeof retryAfterMs === "number" ? Math.ceil(retryAfterMs / 1000) : undefined;
-      return seconds !== undefined
-        ? `Rate limited: too many connection attempts. Retry after ${seconds}s.`
-        : "Rate limited: too many connection attempts. Retry later.";
+      if (typeof retryAfterMs === "number") {
+        const seconds = Math.ceil(retryAfterMs / 1000);
+        return `Rate limited: too many connection attempts. Retry after ${seconds}s.`;
+      }
+      return "Rate limited: too many connection attempts. Retry later.";
     }
     case "room_full":
       return "Room is full. Retry later.";
@@ -45,7 +54,7 @@ export function handleWsOpenResult(
   event: Extract<ChatClientCoreEvent, { type: "ws/open.result" }>,
 ): ReduceResult {
   const pending = state.pending;
-  if (!pending || pending.type !== "pending/connect.ws") return { state, commands: [] };
+  if (pending?.type !== "pending/connect.ws") return { state, commands: [] };
 
   if (event.ok) {
     return {
@@ -105,7 +114,8 @@ export function handleWsOpenResult(
   }
 
   if (event.error.type === "handshake_http_error" && event.error.status === 429) {
-    const kind = classifyHandshake429(event.error);
+    const classification = classifyHandshake429(event.error);
+    const kind = classification.kind;
 
     const commands: ChatClientCoreCommand[] = [
       {
@@ -119,6 +129,16 @@ export function handleWsOpenResult(
         },
       },
     ];
+    if (classification.source === "legacy_body") {
+      commands.push({
+        type: "cmd/telemetry.send",
+        event: {
+          name: "vscodeChat.ws.legacy_fallback",
+          fallback: "handshake_429_body",
+          kind,
+        },
+      });
+    }
 
     // Policy: When auto-reconnecting, treat 429s as a signal to stop or slow down retries.
     if (pending.origin === "reconnect") {

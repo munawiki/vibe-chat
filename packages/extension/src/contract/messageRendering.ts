@@ -1,20 +1,6 @@
 import LinkifyIt from "linkify-it";
 import { normalizeExternalHref } from "./safeLinks.js";
 
-/**
- * Safe message tokenization for Webview rendering.
- *
- * Why:
- * - The chat payload remains plain text end-to-end.
- * - The Webview may provide safe, read-only presentation enhancements (links + code blocks).
- *
- * Invariants:
- * - Never produce tokens that require `innerHTML` to render.
- * - Only `http(s)` links are emitted as `link` tokens.
- * - Links are not recognized inside code blocks.
- * - Unclosed triple-backtick fences disable code-block parsing for the whole message.
- */
-
 export type MessageToken =
   | { kind: "text"; text: string }
   | { kind: "link"; text: string; href: string }
@@ -107,7 +93,7 @@ function pushMergedText(out: MessageToken[], text: string): void;
 function pushMergedText(out: Array<FenceToken | MessageToken>, text: string): void {
   if (!text) return;
 
-  const prev = out[out.length - 1];
+  const prev = out.at(-1);
   if (prev?.kind === "text") prev.text += text;
   else out.push({ kind: "text", text });
 }

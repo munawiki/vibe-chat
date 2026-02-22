@@ -1,12 +1,6 @@
 import { z } from "zod";
 import { GithubUserIdSchema } from "@vscode-chat/protocol";
 
-/**
- * Invariant: This module is a "pure contract" that is safe to import from both
- * Extension Host (Node) and Webview (browser). Keep it dependency-light and
- * side-effect-free to prevent accidental runtime coupling.
- */
-
 export const GitHubLoginSchema = z
   .string()
   .min(1)
@@ -38,10 +32,4 @@ export const GitHubProfileSchema = z
     updatedAt: z.string().datetime().optional(),
   })
   .merge(GitHubProfileMetaSchema);
-
-/**
- * Invariant: Public fields of `GitHubProfile` MUST remain stable across the
- * Extension Host and Webview boundary. Treat this module as the single source
- * of truth for that boundary contract.
- */
 export type GitHubProfile = z.infer<typeof GitHubProfileSchema>;

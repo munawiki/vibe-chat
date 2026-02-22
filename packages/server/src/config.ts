@@ -147,23 +147,26 @@ export function parseServerConfig(
   }
 
   const maxConnectionsPerRoom = parsed.data.CHAT_MAX_CONNECTIONS_PER_ROOM;
+  const chatRoomBase = {
+    messageRate: {
+      windowMs: parsed.data.CHAT_MESSAGE_RATE_WINDOW_MS,
+      maxCount: parsed.data.CHAT_MESSAGE_RATE_MAX_COUNT,
+    },
+    connectRate: {
+      windowMs: parsed.data.CHAT_CONNECT_RATE_WINDOW_MS,
+      maxCount: parsed.data.CHAT_CONNECT_RATE_MAX_COUNT,
+    },
+    maxConnectionsPerUser: parsed.data.CHAT_MAX_CONNECTIONS_PER_USER,
+    historyLimit: parsed.data.CHAT_HISTORY_LIMIT,
+    historyPersistEveryNMessages: parsed.data.CHAT_HISTORY_PERSIST_EVERY_N_MESSAGES,
+  };
+  const chatRoom: ServerConfig["chatRoom"] =
+    maxConnectionsPerRoom === undefined ? chatRoomBase : { ...chatRoomBase, maxConnectionsPerRoom };
+
   const config: ServerConfig = {
     operatorDeniedGithubUserIds: parsed.data.DENY_GITHUB_USER_IDS,
     moderatorGithubUserIds: parsed.data.MODERATOR_GITHUB_USER_IDS,
-    chatRoom: {
-      messageRate: {
-        windowMs: parsed.data.CHAT_MESSAGE_RATE_WINDOW_MS,
-        maxCount: parsed.data.CHAT_MESSAGE_RATE_MAX_COUNT,
-      },
-      connectRate: {
-        windowMs: parsed.data.CHAT_CONNECT_RATE_WINDOW_MS,
-        maxCount: parsed.data.CHAT_CONNECT_RATE_MAX_COUNT,
-      },
-      maxConnectionsPerUser: parsed.data.CHAT_MAX_CONNECTIONS_PER_USER,
-      ...(maxConnectionsPerRoom !== undefined ? { maxConnectionsPerRoom } : {}),
-      historyLimit: parsed.data.CHAT_HISTORY_LIMIT,
-      historyPersistEveryNMessages: parsed.data.CHAT_HISTORY_PERSIST_EVERY_N_MESSAGES,
-    },
+    chatRoom,
   };
 
   return { ok: true, config };

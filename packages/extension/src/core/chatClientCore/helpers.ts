@@ -1,10 +1,5 @@
 import type { ChatClientCoreState, ChatClientState } from "./types.js";
 
-/**
- * Invariant: the core state machine is a pure transition system.
- * This module MUST remain side-effect-free and deterministic.
- */
-
 type SignedOutDisconnectedState = Extract<
   ChatClientState,
   { authStatus: "signedOut"; status: "disconnected" }

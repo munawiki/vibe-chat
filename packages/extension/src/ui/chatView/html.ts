@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { CHAT_MESSAGE_TEXT_MAX_LEN } from "@vscode-chat/protocol";
+import { randomBytes } from "node:crypto";
 
 export function renderChatWebviewHtml(options: {
   webview: vscode.Webview;
@@ -132,10 +133,5 @@ export function renderChatWebviewHtml(options: {
 }
 
 function randomNonce(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let out = "";
-  for (let i = 0; i < 32; i += 1) {
-    out += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return out;
+  return randomBytes(16).toString("hex");
 }
