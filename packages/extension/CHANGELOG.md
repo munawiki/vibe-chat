@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.8
+
+- Modularize chat provider/controller flows across extension, webview, and server.
+- Harden DM trust handling and key publication safety for account-scoped sessions.
+- Expand automated test coverage for chat pipeline, DM moderation, and protocol routing.
+
 ## 0.0.7
 
 - Add `Vibe Chat: Sign out` (command palette + profile action).
