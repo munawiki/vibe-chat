@@ -77,7 +77,7 @@ vi.mock("../src/net/chatClient.js", () => ({
   },
 }));
 
-vi.mock("../src/ui/chatViewProvider.js", () => ({
+vi.mock("../src/ui/chatViewProvider/provider.js", () => ({
   ChatViewProvider: class {
     static viewType = "vscodeChat.chatView";
     onConfigChanged = vi.fn();

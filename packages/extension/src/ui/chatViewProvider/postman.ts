@@ -1,5 +1,5 @@
 import type * as vscode from "vscode";
-import type { ExtOutbound } from "../../contract/webviewProtocol.js";
+import type { ExtOutbound } from "../../contract/protocol/index.js";
 
 export class WebviewPostman {
   private view: vscode.WebviewView | undefined;

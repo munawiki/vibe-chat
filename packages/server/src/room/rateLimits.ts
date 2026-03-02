@@ -1,15 +1,21 @@
-import { boundFixedWindowRateLimitStore } from "../util.js";
-import type { RateWindow } from "../util.js";
+import { boundFixedWindowRateLimitStore, type RateWindow } from "../util/rateLimitStore.js";
 import { nextFixedWindowRateLimit } from "../policy/chatRoomPolicy.js";
 import type { ChatRoomGuardrails } from "../config.js";
 import { ROOM_RATE_LIMIT_MAX_TRACKED_KEYS } from "./constants.js";
 import type { GithubUserId } from "@vscode-chat/protocol";
+import type { ChatRoomDeps } from "./chatRoom/types.js";
 
 export class ChatRoomRateLimits {
   private readonly rateByUser = new Map<GithubUserId, RateWindow>();
   private readonly connectRateByIp = new Map<string, RateWindow>();
+  private readonly config: Pick<ChatRoomGuardrails, "messageRate" | "connectRate">;
 
-  constructor(private readonly config: Pick<ChatRoomGuardrails, "messageRate" | "connectRate">) {}
+  constructor(options: {
+    config: Pick<ChatRoomGuardrails, "messageRate" | "connectRate">;
+    deps?: Pick<ChatRoomDeps, "log">;
+  }) {
+    this.config = options.config;
+  }
 
   checkMessageRateLimit(
     githubUserId: GithubUserId,

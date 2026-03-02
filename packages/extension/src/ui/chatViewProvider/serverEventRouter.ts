@@ -1,5 +1,5 @@
 import type { ServerEvent } from "@vscode-chat/protocol";
-import type { ExtOutbound } from "../../contract/webviewProtocol.js";
+import type { ExtOutbound } from "../../contract/protocol/index.js";
 import type { ChatClient } from "../../net/chatClient.js";
 import type { ChatViewDirectMessages } from "../chatView/directMessages.js";
 import type { ChatViewModeration } from "../chatView/moderation.js";

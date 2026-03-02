@@ -1,5 +1,5 @@
 import type * as vscode from "vscode";
-import { UiInboundSchema, type UiInbound } from "../../contract/webviewProtocol.js";
+import { UiInboundSchema, type UiInbound } from "../../contract/protocol/index.js";
 
 type HandlerMap = {
   [T in UiInbound["type"]]: (msg: Extract<UiInbound, { type: T }>) => void | Promise<void>;

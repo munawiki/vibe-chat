@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { ChatClient } from "./net/chatClient.js";
-import { ChatViewProvider } from "./ui/chatViewProvider.js";
+import { ChatViewProvider } from "./ui/chatViewProvider/provider.js";
 import { ChatStatusBar } from "./ui/chatStatusBar.js";
 import { createExtensionBus } from "./bus/extensionBus.js";
 import { createExtensionTelemetry } from "./telemetry.js";

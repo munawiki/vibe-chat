@@ -1,4 +1,4 @@
-import type { ExtOutbound } from "../../src/contract/webviewProtocol.js";
+import type { ExtOutbound } from "../../src/contract/protocol/index.js";
 import { addMessage, renderGlobalConversation } from "../features/chat.js";
 import {
   handleExtModerationAction,
@@ -9,15 +9,14 @@ import {
   handleExtProfileResult,
 } from "../features/profile.js";
 import { handleExtPresence } from "../features/presence.js";
+import { renderComposer } from "./renderComposer.js";
 import {
   renderChannelTabs,
-  renderComposer,
   renderConversation,
   renderDmPanel,
   renderDmWarning,
-  renderState,
-  setError,
-} from "./render.js";
+} from "./renderDm.js";
+import { renderState, setError } from "./render.js";
 import type { WebviewContext } from "./types.js";
 
 function handleExtHistory(
@@ -27,7 +26,7 @@ function handleExtHistory(
   ctx.state.globalHistory = msg.history;
   ctx.state.outbox = [];
   ctx.state.settledClientMessageIds.clear();
-  if (ctx.state.activeChannel === "global") renderGlobalConversation(ctx);
+  if (ctx.state.channel.activeChannel === "global") renderGlobalConversation(ctx);
 }
 
 function handleExtMessage(
@@ -47,7 +46,7 @@ function handleExtMessage(
     ctx.state.settledClientMessageIds.add(msg.clientMessageId);
   }
 
-  if (ctx.state.activeChannel === "global") renderGlobalConversation(ctx);
+  if (ctx.state.channel.activeChannel === "global") renderGlobalConversation(ctx);
   renderComposer(ctx);
 }
 
@@ -61,7 +60,7 @@ function handleExtMessageSendError(
   entry.phase = "error";
   entry.errorMessage = msg.message ?? msg.code;
   ctx.state.settledClientMessageIds.add(msg.clientMessageId);
-  if (ctx.state.activeChannel === "global") renderGlobalConversation(ctx);
+  if (ctx.state.channel.activeChannel === "global") renderGlobalConversation(ctx);
   renderComposer(ctx);
 }
 
@@ -69,9 +68,12 @@ function handleDmState(
   ctx: WebviewContext,
   msg: Extract<ExtOutbound, { type: "ext/dm.state" }>,
 ): void {
-  ctx.state.dmThreads = msg.threads;
-  if (ctx.state.activeDmId && !ctx.state.dmThreads.some((t) => t.dmId === ctx.state.activeDmId)) {
-    ctx.state.activeDmId = null;
+  ctx.state.channel.dmThreads = msg.threads;
+  if (
+    ctx.state.channel.activeDmId &&
+    !ctx.state.channel.dmThreads.some((t) => t.dmId === ctx.state.channel.activeDmId)
+  ) {
+    ctx.state.channel.activeDmId = null;
   }
   renderChannelTabs(ctx);
   renderDmPanel(ctx);
@@ -83,11 +85,11 @@ function handleDmHistory(
   ctx: WebviewContext,
   msg: Extract<ExtOutbound, { type: "ext/dm.history" }>,
 ): void {
-  ctx.state.dmMessagesById.set(msg.dmId, msg.history);
-  if (ctx.state.activeChannel === "dm" && ctx.state.activeDmId === msg.dmId) {
+  ctx.state.channel.dmMessagesById.set(msg.dmId, msg.history);
+  if (ctx.state.channel.activeChannel === "dm" && ctx.state.channel.activeDmId === msg.dmId) {
     renderConversation(ctx);
-  } else if (ctx.state.activeChannel === "dm" && ctx.state.activeDmId === null) {
-    ctx.state.activeDmId = msg.dmId;
+  } else if (ctx.state.channel.activeChannel === "dm" && ctx.state.channel.activeDmId === null) {
+    ctx.state.channel.activeDmId = msg.dmId;
     renderChannelTabs(ctx);
     renderDmPanel(ctx);
     renderConversation(ctx);
@@ -99,11 +101,14 @@ function handleDmMessage(
   ctx: WebviewContext,
   msg: Extract<ExtOutbound, { type: "ext/dm.message" }>,
 ): void {
-  const history = ctx.state.dmMessagesById.get(msg.message.dmId) ?? [];
+  const history = ctx.state.channel.dmMessagesById.get(msg.message.dmId) ?? [];
   history.push(msg.message);
-  ctx.state.dmMessagesById.set(msg.message.dmId, history);
+  ctx.state.channel.dmMessagesById.set(msg.message.dmId, history);
 
-  if (ctx.state.activeChannel === "dm" && ctx.state.activeDmId === msg.message.dmId) {
+  if (
+    ctx.state.channel.activeChannel === "dm" &&
+    ctx.state.channel.activeDmId === msg.message.dmId
+  ) {
     addMessage(ctx, msg.message);
   }
   renderComposer(ctx);
@@ -113,7 +118,7 @@ type HandlerMap = {
   [T in ExtOutbound["type"]]: (ctx: WebviewContext, msg: Extract<ExtOutbound, { type: T }>) => void;
 };
 
-const handlers = {
+const HANDLERS = {
   "ext/state": (ctx, msg) => {
     setError(ctx, "");
     renderState(ctx, msg.state);
@@ -135,6 +140,8 @@ const handlers = {
 } satisfies HandlerMap;
 
 export function dispatchExtOutbound(ctx: WebviewContext, msg: ExtOutbound): void {
-  const handler = handlers[msg.type] as (ctx: WebviewContext, msg: ExtOutbound) => void;
-  handler(ctx, msg);
+  const handler = HANDLERS[msg.type] as
+    | ((ctx: WebviewContext, msg: ExtOutbound) => void)
+    | undefined;
+  handler?.(ctx, msg);
 }

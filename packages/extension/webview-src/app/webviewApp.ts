@@ -1,4 +1,4 @@
-import type { UiInbound } from "../../src/contract/webviewProtocol.js";
+import type { UiInbound } from "../../src/contract/protocol/index.js";
 import { getElements } from "../dom/elements.js";
 import { createInitialWebviewState } from "../state/webviewState.js";
 import { startWebviewApp } from "./controller.js";

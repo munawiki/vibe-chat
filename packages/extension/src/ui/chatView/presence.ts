@@ -1,5 +1,5 @@
 import type { PresenceSnapshot } from "@vscode-chat/protocol";
-import type { ExtPresenceMsg } from "../../contract/webviewProtocol.js";
+import type { ExtPresenceMsg } from "../../contract/protocol/index.js";
 
 export class ChatViewPresence {
   private snapshot: PresenceSnapshot | undefined;

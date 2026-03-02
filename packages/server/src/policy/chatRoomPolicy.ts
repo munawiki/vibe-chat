@@ -1,5 +1,5 @@
 import type { ChatMessagePlain } from "@vscode-chat/protocol";
-import type { RateWindow } from "../util.js";
+import type { RateWindow } from "../util/rateLimitStore.js";
 
 export type RateLimitDecision =
   | { allowed: true; nextWindow: RateWindow }

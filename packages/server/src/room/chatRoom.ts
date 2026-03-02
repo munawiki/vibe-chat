@@ -6,16 +6,19 @@ import {
   type GithubUserId,
   type ServerEvent,
 } from "@vscode-chat/protocol";
-import { parseServerConfig, type ChatRoomGuardrails } from "../config.js";
+import type { ChatRoomGuardrails } from "../config.js";
 import { WS_MAX_CONSECUTIVE_INVALID_PAYLOADS, WS_MAX_INBOUND_MESSAGE_BYTES } from "./constants.js";
 import { tryGetSocketUser } from "../socketAttachment.js";
 import { ChatRoomHistory } from "./history.js";
 import { ChatRoomModeration } from "./moderation.js";
-import { ChatRoomPresence } from "./presence.js";
 import { ChatRoomRateLimits } from "./rateLimits.js";
 import { createClientEventDispatcher, type ClientEvent } from "./chatRoom/dispatcher.js";
 import { ChatRoomDmService } from "./chatRoom/dm.js";
 import { handleChatRoomFetchWebSocketHandshake } from "./chatRoom/handshake.js";
+import { ChatRoomPresence } from "./chatRoom/presence.js";
+import { ChatRoomSession } from "./chatRoom/session.js";
+import type { ChatRoomDeps, SendErrorArgs } from "./chatRoom/types.js";
+import { log as structuredLog } from "../util/structuredLog.js";
 
 export class ChatRoom implements DurableObject {
   private readonly config: ChatRoomGuardrails;
@@ -32,6 +35,7 @@ export class ChatRoom implements DurableObject {
   ) => Promise<void>;
 
   private readonly moderatorGithubUserIds: ReadonlySet<GithubUserId>;
+  private readonly session: ChatRoomSession;
   private readonly invalidPayloadStrikes = new WeakMap<WebSocket, number>();
 
   constructor(
@@ -43,43 +47,41 @@ export class ChatRoom implements DurableObject {
       MODERATOR_GITHUB_USER_IDS?: string;
     } & Record<string, unknown>,
   ) {
-    const configParsed = parseServerConfig(this.env);
-    if (!configParsed.ok) {
-      this.log({ type: "invalid_config", issues: configParsed.error.issues, scope: "chat_room" });
-      throw new Error("invalid_config");
-    }
+    this.session = new ChatRoomSession(
+      {
+        log: (event) => this.log(event),
+        sendError: (ws, err) => this.sendError(ws, err),
+      },
+      this.env,
+    );
+    const configParsed = this.session.parseConfigOrThrow("chat_room");
 
-    this.config = configParsed.config.chatRoom;
+    this.config = configParsed.guardrails;
+    this.moderatorGithubUserIds = configParsed.moderatorGithubUserIds;
 
     this.history = new ChatRoomHistory(this.state, this.config);
-    this.rateLimits = new ChatRoomRateLimits(this.config);
-
-    this.moderatorGithubUserIds = configParsed.config.moderatorGithubUserIds;
-    this.moderation = new ChatRoomModeration(
-      this.state,
-      configParsed.config.operatorDeniedGithubUserIds,
-      () => this.state.getWebSockets(),
-      (ws, event) => this.sendEvent(ws, event),
-      (ws, err) => this.sendError(ws, err),
-      (event) => this.log(event),
-    );
-
-    this.presence = new ChatRoomPresence(
-      () => this.state.getWebSockets(),
-      (event) => this.broadcast(event),
-    );
+    const deps: ChatRoomDeps = {
+      state: this.state,
+      getWebSockets: () => this.state.getWebSockets(),
+      sendEvent: (ws, event) => this.sendEvent(ws, event),
+      sendError: (ws, err) => this.sendError(ws, err),
+      log: (event) => this.log(event),
+    };
+    this.rateLimits = new ChatRoomRateLimits({ config: this.config, deps });
+    this.moderation = new ChatRoomModeration({
+      ...deps,
+      operatorDeniedGithubUserIds: configParsed.operatorDeniedGithubUserIds,
+    });
+    this.presence = new ChatRoomPresence(deps, (event) => this.broadcast(event));
 
     this.dm = new ChatRoomDmService(this.state, this.env.DM_ROOM);
 
     this.dispatchClientEvent = createClientEventDispatcher({
-      state: this.state,
+      ...deps,
       history: this.history,
       rateLimits: this.rateLimits,
       moderation: this.moderation,
       dm: this.dm,
-      log: (event) => this.log(event),
-      sendEvent: (ws, event) => this.sendEvent(ws, event),
-      sendError: (ws, err) => this.sendError(ws, err),
       broadcastToUsers: (githubUserIds, event) => this.broadcastToUsers(githubUserIds, event),
     });
   }
@@ -89,6 +91,7 @@ export class ChatRoom implements DurableObject {
       state: this.state,
       env: this.env,
       config: this.config,
+      session: this.session,
       moderatorGithubUserIds: this.moderatorGithubUserIds,
       history: this.history,
       rateLimits: this.rateLimits,
@@ -154,12 +157,7 @@ export class ChatRoom implements DurableObject {
   }
 
   private getSocketUserOrClose(ws: WebSocket): AuthUser | undefined {
-    const user = tryGetSocketUser(ws);
-    if (user) return user;
-
-    this.sendError(ws, { code: "server_error", message: "Missing connection identity" });
-    ws.close(1011, "server_error");
-    return undefined;
+    return this.session.getSocketUserOrClose(ws);
   }
 
   webSocketClose(ws: WebSocket): void {
@@ -202,13 +200,7 @@ export class ChatRoom implements DurableObject {
     } catch {}
   }
 
-  private sendError(
-    ws: WebSocket,
-    err: Pick<
-      Extract<ServerEvent, { type: "server/error" }>,
-      "code" | "message" | "retryAfterMs" | "clientMessageId"
-    >,
-  ): void {
+  private sendError(ws: WebSocket, err: SendErrorArgs): void {
     this.sendEvent(ws, {
       version: PROTOCOL_VERSION,
       type: "server/error",
@@ -230,12 +222,6 @@ export class ChatRoom implements DurableObject {
   }
 
   private log(event: Record<string, unknown>): void {
-    // NOTE: Keep logs structured and privacy-preserving. Never include tokens or chat message plaintext.
-    console.log(
-      JSON.stringify({
-        ts: new Date().toISOString(),
-        ...event,
-      }),
-    );
+    structuredLog(event);
   }
 }

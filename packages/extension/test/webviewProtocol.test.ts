@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ExtOutboundSchema, UiInboundSchema } from "../src/contract/webviewProtocol.js";
+import { ExtOutboundSchema, UiInboundSchema } from "../src/contract/protocol/index.js";
 
 describe("webviewProtocol", () => {
   it("accepts ext/presence snapshot", () => {

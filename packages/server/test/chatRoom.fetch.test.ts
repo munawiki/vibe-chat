@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AuthUser, GithubUserId, WsHandshakeRejection } from "@vscode-chat/protocol";
+import { MockWebSocket } from "./helpers/mockWebSocket.js";
 
 const verifySessionTokenMock = vi.hoisted(() => vi.fn());
 vi.mock("../src/session.js", () => ({
@@ -18,28 +19,6 @@ class MemoryStorage {
   put(key: string, value: unknown): Promise<void> {
     this.data.set(key, value);
     return Promise.resolve();
-  }
-}
-
-class FakeWebSocket {
-  private attachment: unknown;
-  readonly sent: string[] = [];
-  readonly closed: Array<{ code: number; reason: string }> = [];
-
-  serializeAttachment(attachment: unknown): void {
-    this.attachment = attachment;
-  }
-
-  deserializeAttachment(): unknown {
-    return this.attachment;
-  }
-
-  send(data: string): void {
-    this.sent.push(String(data));
-  }
-
-  close(code: number, reason: string): void {
-    this.closed.push({ code, reason });
   }
 }
 
@@ -77,8 +56,8 @@ describe("ChatRoom fetch rejections", () => {
       0: WebSocket;
       1: WebSocket;
       constructor() {
-        this[0] = new FakeWebSocket() as unknown as WebSocket;
-        this[1] = new FakeWebSocket() as unknown as WebSocket;
+        this[0] = new MockWebSocket() as unknown as WebSocket;
+        this[1] = new MockWebSocket() as unknown as WebSocket;
       }
     }
 
@@ -176,7 +155,7 @@ describe("ChatRoom fetch rejections", () => {
 
     const fullState = new FakeDurableObjectState() as unknown as DurableObjectState;
     (fullState as unknown as FakeDurableObjectState).acceptWebSocket(
-      new FakeWebSocket() as unknown as WebSocket,
+      new MockWebSocket() as unknown as WebSocket,
     );
     const fullRoom = new ChatRoom(fullState, { ...envBase, CHAT_MAX_CONNECTIONS_PER_ROOM: "1" });
     const roomFull = await fullRoom.fetch(
@@ -191,7 +170,7 @@ describe("ChatRoom fetch rejections", () => {
     expect(roomFullBody.retryAfterMs).toBeUndefined();
 
     const perUserState = new FakeDurableObjectState() as unknown as DurableObjectState;
-    const existing = new FakeWebSocket();
+    const existing = new MockWebSocket();
     existing.serializeAttachment({ user: alice } as unknown as { user: AuthUser });
     (perUserState as unknown as FakeDurableObjectState).acceptWebSocket(
       existing as unknown as WebSocket,

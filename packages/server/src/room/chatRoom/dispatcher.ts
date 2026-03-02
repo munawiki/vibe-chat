@@ -11,21 +11,14 @@ import {
 } from "@vscode-chat/protocol";
 import { createChatMessagePlain } from "../../policy/chatRoomPolicy.js";
 import { tryGetSocketUser } from "../../socketAttachment.js";
-import type { ChatRoomHistory } from "../history.js";
 import {
   createCorrelatedServerMessageNewEvents,
   pickCorrelatedServerMessageNewEvent,
 } from "../messageCorrelation.js";
-import type { ChatRoomModeration } from "../moderation.js";
-import type { ChatRoomRateLimits } from "../rateLimits.js";
-import { ChatRoomDmService } from "./dm.js";
+import type { DispatchContext } from "./types.js";
+export type { DispatchContext } from "./types.js";
 
 export type ClientEvent = z.infer<typeof ClientEventSchema>;
-
-type SendErrorArgs = Pick<
-  Extract<ServerEvent, { type: "server/error" }>,
-  "code" | "message" | "retryAfterMs" | "clientMessageId"
->;
 
 type HandlerMap = {
   [T in ClientEvent["type"]]: (
@@ -39,19 +32,15 @@ async function handleClientMessageSend(
   ws: WebSocket,
   user: AuthUser,
   event: Extract<ClientEvent, { type: "client/message.send" }>,
-  options: {
-    state: DurableObjectState;
-    history: ChatRoomHistory;
-    rateLimits: ChatRoomRateLimits;
-    log: (event: Record<string, unknown>) => void;
-    sendEvent: (ws: WebSocket, event: ServerEvent) => void;
-    sendError: (ws: WebSocket, err: SendErrorArgs) => void;
-  },
+  context: Pick<
+    DispatchContext,
+    "state" | "history" | "rateLimits" | "log" | "sendEvent" | "sendError"
+  >,
 ): Promise<void> {
-  const rateCheck = options.rateLimits.checkMessageRateLimit(user.githubUserId);
+  const rateCheck = context.rateLimits.checkMessageRateLimit(user.githubUserId);
   if (!rateCheck.allowed) {
-    options.log({ type: "chat_rate_limited", retryAfterMs: rateCheck.retryAfterMs });
-    options.sendError(ws, {
+    context.log({ type: "chat_rate_limited", retryAfterMs: rateCheck.retryAfterMs });
+    context.sendError(ws, {
       code: "rate_limited",
       message: "Too many messages",
       retryAfterMs: rateCheck.retryAfterMs,
@@ -67,52 +56,48 @@ async function handleClientMessageSend(
     createdAt: new Date().toISOString(),
   });
 
-  await options.history.append(newMessage);
+  await context.history.append(newMessage);
   const events = createCorrelatedServerMessageNewEvents({
     message: newMessage,
     ...(event.clientMessageId ? { clientMessageId: event.clientMessageId } : {}),
   });
-  for (const socket of options.state.getWebSockets()) {
+  for (const socket of context.state.getWebSockets()) {
     const socketUser = tryGetSocketUser(socket);
     const correlated = pickCorrelatedServerMessageNewEvent({
       recipientGithubUserId: socketUser?.githubUserId,
       senderGithubUserId: user.githubUserId,
       events,
     });
-    options.sendEvent(socket, correlated);
+    context.sendEvent(socket, correlated);
   }
 }
 
 async function handleClientDmIdentityPublish(
   githubUserId: GithubUserId,
   event: Extract<ClientEvent, { type: "client/dm.identity.publish" }>,
-  options: { dm: ChatRoomDmService },
+  context: Pick<DispatchContext, "dm">,
 ): Promise<void> {
-  await options.dm.ensureIdentitiesLoaded();
-  await options.dm.storeIdentity(githubUserId, event.identity);
+  await context.dm.ensureIdentitiesLoaded();
+  await context.dm.storeIdentity(githubUserId, event.identity);
 }
 
 async function handleClientDmOpen(
   ws: WebSocket,
   githubUserId: GithubUserId,
   event: Extract<ClientEvent, { type: "client/dm.open" }>,
-  options: {
-    dm: ChatRoomDmService;
-    sendEvent: (ws: WebSocket, event: ServerEvent) => void;
-    sendError: (ws: WebSocket, err: SendErrorArgs) => void;
-  },
+  context: Pick<DispatchContext, "dm" | "sendEvent" | "sendError">,
 ): Promise<void> {
-  await options.dm.ensureIdentitiesLoaded();
+  await context.dm.ensureIdentitiesLoaded();
   if (event.targetGithubUserId === githubUserId) {
-    options.sendError(ws, { code: "invalid_payload", message: "Cannot DM self" });
+    context.sendError(ws, { code: "invalid_payload", message: "Cannot DM self" });
     return;
   }
 
   const dmId = dmIdFromParticipants(githubUserId, event.targetGithubUserId);
-  const history = await options.dm.readHistory(dmId);
-  const peerIdentity = options.dm.getIdentity(event.targetGithubUserId);
+  const history = await context.dm.readHistory(dmId);
+  const peerIdentity = context.dm.getIdentity(event.targetGithubUserId);
 
-  options.sendEvent(ws, {
+  context.sendEvent(ws, {
     version: PROTOCOL_VERSION,
     type: "server/dm.welcome",
     dmId,
@@ -126,18 +111,12 @@ async function handleClientDmMessageSend(
   ws: WebSocket,
   user: AuthUser,
   event: Extract<ClientEvent, { type: "client/dm.message.send" }>,
-  options: {
-    dm: ChatRoomDmService;
-    rateLimits: ChatRoomRateLimits;
-    log: (event: Record<string, unknown>) => void;
-    sendError: (ws: WebSocket, err: SendErrorArgs) => void;
-    broadcastToUsers: (githubUserIds: ReadonlySet<GithubUserId>, event: ServerEvent) => void;
-  },
+  context: Pick<DispatchContext, "dm" | "rateLimits" | "log" | "sendError" | "broadcastToUsers">,
 ): Promise<void> {
-  const rateCheck = options.rateLimits.checkMessageRateLimit(user.githubUserId);
+  const rateCheck = context.rateLimits.checkMessageRateLimit(user.githubUserId);
   if (!rateCheck.allowed) {
-    options.log({ type: "dm_rate_limited", retryAfterMs: rateCheck.retryAfterMs });
-    options.sendError(ws, {
+    context.log({ type: "dm_rate_limited", retryAfterMs: rateCheck.retryAfterMs });
+    context.sendError(ws, {
       code: "rate_limited",
       message: "Too many messages",
       retryAfterMs: rateCheck.retryAfterMs,
@@ -145,9 +124,9 @@ async function handleClientDmMessageSend(
     return;
   }
 
-  const peerResult = options.dm.getPeerGithubUserId(user.githubUserId, event.dmId);
+  const peerResult = context.dm.getPeerGithubUserId(user.githubUserId, event.dmId);
   if (!peerResult.ok) {
-    options.sendError(ws, {
+    context.sendError(ws, {
       code: peerResult.error === "invalid_dm_id" ? "invalid_payload" : "forbidden",
       message: peerResult.error === "invalid_dm_id" ? "Invalid dmId" : "Not a DM participant",
     });
@@ -156,7 +135,7 @@ async function handleClientDmMessageSend(
   const peerGithubUserId = peerResult.peerGithubUserId;
 
   if (peerGithubUserId !== event.recipientGithubUserId) {
-    options.sendError(ws, { code: "invalid_payload", message: "DM recipient mismatch" });
+    context.sendError(ws, { code: "invalid_payload", message: "DM recipient mismatch" });
     return;
   }
 
@@ -173,59 +152,34 @@ async function handleClientDmMessageSend(
     createdAt: now,
   };
 
-  await options.dm.appendHistory(event.dmId, newMessage);
+  await context.dm.appendHistory(event.dmId, newMessage);
 
-  options.broadcastToUsers(new Set([user.githubUserId, peerGithubUserId]), {
+  context.broadcastToUsers(new Set([user.githubUserId, peerGithubUserId]), {
     version: PROTOCOL_VERSION,
     type: "server/dm.message.new",
     message: newMessage,
   } satisfies ServerEvent);
 }
 
-export function createClientEventDispatcher(options: {
-  state: DurableObjectState;
-  history: ChatRoomHistory;
-  rateLimits: ChatRoomRateLimits;
-  moderation: ChatRoomModeration;
-  dm: ChatRoomDmService;
-  log: (event: Record<string, unknown>) => void;
-  sendEvent: (ws: WebSocket, event: ServerEvent) => void;
-  sendError: (ws: WebSocket, err: SendErrorArgs) => void;
-  broadcastToUsers: (githubUserIds: ReadonlySet<GithubUserId>, event: ServerEvent) => void;
-}): (ws: WebSocket, user: AuthUser, event: ClientEvent) => Promise<void> {
+export function createClientEventDispatcher(
+  context: DispatchContext,
+): (ws: WebSocket, user: AuthUser, event: ClientEvent) => Promise<void> {
   const handlers = {
     "client/hello": async () => {
       // No-op: the authenticated identity is already bound at the WebSocket upgrade boundary.
     },
     "client/message.send": async (ws, user, event) =>
-      handleClientMessageSend(ws, user, event, {
-        state: options.state,
-        history: options.history,
-        rateLimits: options.rateLimits,
-        log: options.log,
-        sendEvent: options.sendEvent,
-        sendError: options.sendError,
-      }),
+      handleClientMessageSend(ws, user, event, context),
     "client/dm.identity.publish": async (_ws, user, event) =>
-      handleClientDmIdentityPublish(user.githubUserId, event, { dm: options.dm }),
+      handleClientDmIdentityPublish(user.githubUserId, event, context),
     "client/dm.open": async (ws, user, event) =>
-      handleClientDmOpen(ws, user.githubUserId, event, {
-        dm: options.dm,
-        sendEvent: options.sendEvent,
-        sendError: options.sendError,
-      }),
+      handleClientDmOpen(ws, user.githubUserId, event, context),
     "client/dm.message.send": async (ws, user, event) =>
-      handleClientDmMessageSend(ws, user, event, {
-        dm: options.dm,
-        rateLimits: options.rateLimits,
-        log: options.log,
-        sendError: options.sendError,
-        broadcastToUsers: options.broadcastToUsers,
-      }),
+      handleClientDmMessageSend(ws, user, event, context),
     "client/moderation.user.deny": async (ws, user, event) =>
-      options.moderation.handleUserDeny(ws, user, event.targetGithubUserId),
+      context.moderation.handleUserDeny(ws, user, event.targetGithubUserId),
     "client/moderation.user.allow": async (ws, user, event) =>
-      options.moderation.handleUserAllow(ws, user, event.targetGithubUserId),
+      context.moderation.handleUserAllow(ws, user, event.targetGithubUserId),
   } satisfies HandlerMap;
 
   return async (ws: WebSocket, user: AuthUser, event: ClientEvent): Promise<void> => {

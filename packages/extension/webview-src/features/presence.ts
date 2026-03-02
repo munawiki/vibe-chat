@@ -1,4 +1,4 @@
-import type { ExtPresenceMsg } from "../../src/contract/webviewProtocol.js";
+import type { ExtPresenceMsg } from "../../src/contract/protocol/index.js";
 import type { WebviewContext } from "../app/types.js";
 import { createModBadge, hasModeratorRole } from "./userRoles.js";
 import { bindProfileOpen } from "./profile.js";
@@ -62,14 +62,15 @@ function renderPresencePanel(ctx: WebviewContext): void {
 }
 
 export function renderPresence(ctx: WebviewContext): void {
-  if (!ctx.state.isConnected && ctx.state.activeOverlay.kind === "presence") closeOverlay(ctx);
+  if (!ctx.state.auth.isConnected && ctx.state.overlay.activeOverlay.kind === "presence")
+    closeOverlay(ctx);
   renderPresenceTitle(ctx);
   renderPresencePanel(ctx);
 }
 
 export function bindPresenceUiEvents(ctx: WebviewContext): void {
   ctx.els.connButton?.addEventListener("click", () => {
-    if (!ctx.state.isConnected) return;
+    if (!ctx.state.auth.isConnected) return;
     openOverlay(ctx, "presence");
   });
   ctx.els.presenceClose?.addEventListener("click", () => closeOverlay(ctx));

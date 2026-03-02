@@ -1,4 +1,5 @@
 import type { ChatClientCoreState, ChatClientState } from "./types.js";
+import { assertNever } from "@vscode-chat/protocol";
 
 type SignedOutDisconnectedState = Extract<
   ChatClientState,
@@ -34,6 +35,4 @@ export function toSignedOutDisconnected(
     : { authStatus: "signedOut", status: "disconnected" };
 }
 
-export function assertNever(x: never): never {
-  throw new Error(`unreachable: ${JSON.stringify(x)}`);
-}
+export { assertNever };

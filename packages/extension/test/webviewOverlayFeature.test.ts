@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
-import type { UiInbound } from "../src/contract/webviewProtocol.js";
+import type { UiInbound } from "../src/contract/protocol/index.js";
 import type { VscodeWebviewApi, WebviewContext } from "../webview-src/app/types.js";
 import { getElements } from "../webview-src/dom/elements.js";
 import { closeOverlay, openOverlay } from "../webview-src/features/overlay.js";
@@ -43,23 +43,24 @@ describe("webview overlay feature", () => {
     const ctx = createCtx();
 
     openOverlay(ctx, "presence");
-    expect(ctx.state.activeOverlay.kind).toBe("presence");
+    expect(ctx.state.overlay.activeOverlay.kind).toBe("presence");
     expect((document.getElementById("presenceOverlay") as HTMLElement).hidden).toBe(false);
     expect(document.getElementById("btnConnStatus")?.getAttribute("aria-expanded")).toBe("true");
 
     openOverlay(ctx, "profile");
-    expect(ctx.state.activeOverlay.kind).toBe("profile");
+    expect(ctx.state.overlay.activeOverlay.kind).toBe("profile");
     expect((document.getElementById("presenceOverlay") as HTMLElement).hidden).toBe(true);
     expect((document.getElementById("profileOverlay") as HTMLElement).hidden).toBe(false);
 
-    ctx.state.activeProfileLogin = "alice";
-    ctx.state.activeProfileKey = "alice";
-    ctx.state.activeProfileGithubUserId = "1" as import("@vscode-chat/protocol").GithubUserId;
+    ctx.state.overlay.activeProfileLogin = "alice";
+    ctx.state.overlay.activeProfileKey = "alice";
+    ctx.state.overlay.activeProfileGithubUserId =
+      "1" as import("@vscode-chat/protocol").GithubUserId;
     const closed = closeOverlay(ctx);
     expect(closed).toBe(true);
-    expect(ctx.state.activeOverlay.kind).toBe("none");
-    expect(ctx.state.activeProfileLogin).toBe("");
-    expect(ctx.state.activeProfileGithubUserId).toBeNull();
+    expect(ctx.state.overlay.activeOverlay.kind).toBe("none");
+    expect(ctx.state.overlay.activeProfileLogin).toBe("");
+    expect(ctx.state.overlay.activeProfileGithubUserId).toBeNull();
   });
 
   it("returns false when closing while no overlay is active and tolerates missing elements", () => {
@@ -80,9 +81,9 @@ describe("webview overlay feature", () => {
     ctx.els.connButton = null;
 
     openOverlay(ctx, "profile");
-    expect(ctx.state.activeOverlay.kind).toBe("profile");
+    expect(ctx.state.overlay.activeOverlay.kind).toBe("profile");
     closeOverlay(ctx);
-    expect(ctx.state.activeOverlay.kind).toBe("none");
+    expect(ctx.state.overlay.activeOverlay.kind).toBe("none");
   });
 
   it("throws for impossible overlay kinds when forced via unsafe casts", () => {
@@ -96,7 +97,7 @@ describe("webview overlay feature", () => {
       ),
     ).toThrow();
 
-    ctx.state.activeOverlay = { kind: "invalid" as never };
+    ctx.state.overlay.activeOverlay = { kind: "invalid" as never };
     expect(() => closeOverlay(ctx)).toThrow();
   });
 });

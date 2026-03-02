@@ -18,17 +18,15 @@ export type ObservedPeerIdentity =
   | { kind: "trusted"; identity: DmIdentity }
   | { kind: "untrusted"; identity: DmIdentity };
 
+const BLOCKED_WARNING_BY_STATE: Record<DmTrustState, string> = {
+  trusted: DM_TRUST_WARNING_BLOCKED,
+  "pending-trust": DM_TRUST_WARNING_PENDING,
+  blocked: DM_TRUST_WARNING_BLOCKED,
+  "key-unavailable": DM_TRUST_WARNING_KEY_UNAVAILABLE,
+};
+
 function blockedReasonByState(current: DmThreadTrust): string {
-  switch (current.state) {
-    case "pending-trust":
-      return current.warning ?? DM_TRUST_WARNING_PENDING;
-    case "key-unavailable":
-      return current.warning ?? DM_TRUST_WARNING_KEY_UNAVAILABLE;
-    case "blocked":
-      return current.warning ?? DM_TRUST_WARNING_BLOCKED;
-    case "trusted":
-      return current.warning ?? DM_TRUST_WARNING_BLOCKED;
-  }
+  return current.warning ?? BLOCKED_WARNING_BY_STATE[current.state];
 }
 
 export function initialDmThreadTrust(): DmThreadTrust {

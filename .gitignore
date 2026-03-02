@@ -2,6 +2,8 @@ node_modules/
 dist/
 out/
 .wrangler/
+.scannerwork/
+coverage/
 .dev.vars
 .env
 .env.*

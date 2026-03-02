@@ -1,15 +1,12 @@
 import type { WebviewContext } from "../app/types.js";
+import { assertNever } from "@vscode-chat/protocol";
 import { reduceActiveOverlay, type OverlayKind } from "../state/overlayState.js";
 
-function assertNever(x: never): never {
-  throw new Error(`unreachable: ${JSON.stringify(x)}`);
-}
-
 function closeProfileOverlay(ctx: WebviewContext): void {
-  ctx.state.activeProfileLogin = "";
-  ctx.state.activeProfileKey = "";
-  ctx.state.activeProfileGithubUserId = null;
-  ctx.state.moderationAction = null;
+  ctx.state.overlay.activeProfileLogin = "";
+  ctx.state.overlay.activeProfileKey = "";
+  ctx.state.overlay.activeProfileGithubUserId = null;
+  ctx.state.moderation.moderationAction = null;
 
   if (ctx.els.profileError) {
     ctx.els.profileError.hidden = true;
@@ -44,7 +41,7 @@ function showPresenceOverlay(ctx: WebviewContext): void {
 }
 
 export function closeOverlay(ctx: WebviewContext): boolean {
-  const active = ctx.state.activeOverlay.kind;
+  const active = ctx.state.overlay.activeOverlay.kind;
   if (active === "none") return false;
 
   switch (active) {
@@ -58,15 +55,17 @@ export function closeOverlay(ctx: WebviewContext): boolean {
       assertNever(active);
   }
 
-  ctx.state.activeOverlay = reduceActiveOverlay(ctx.state.activeOverlay, { type: "overlay.close" });
+  ctx.state.overlay.activeOverlay = reduceActiveOverlay(ctx.state.overlay.activeOverlay, {
+    type: "overlay.close",
+  });
   return true;
 }
 
 export function openOverlay(ctx: WebviewContext, kind: OverlayKind): void {
-  const active = ctx.state.activeOverlay.kind;
+  const active = ctx.state.overlay.activeOverlay.kind;
   if (active !== "none" && active !== kind) closeOverlay(ctx);
 
-  ctx.state.activeOverlay = reduceActiveOverlay(ctx.state.activeOverlay, {
+  ctx.state.overlay.activeOverlay = reduceActiveOverlay(ctx.state.overlay.activeOverlay, {
     type: "overlay.open",
     kind,
   });

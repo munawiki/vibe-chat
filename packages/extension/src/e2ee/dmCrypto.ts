@@ -28,81 +28,111 @@ function base64ToBytes(value: string): Uint8Array {
   return new Uint8Array(Buffer.from(value, "base64"));
 }
 
-export async function getOrCreateDmKeypair(options: {
-  githubUserId: GithubUserId;
-  secrets: {
-    get(key: string): Thenable<string | undefined>;
-    store(key: string, value: string): Thenable<void>;
-    delete?(key: string): Thenable<void>;
-  };
-  onDiagnostic?: (event: DmSecretMigrationDiagnostic) => void;
-}): Promise<DmKeypair> {
-  const v2Key = dmSecretStorageKeyV2(options.githubUserId);
+type SecretStore = {
+  get(key: string): Thenable<string | undefined>;
+  store(key: string, value: string): Thenable<void>;
+  delete?(key: string): Thenable<void>;
+};
 
-  let stored = await options.secrets.get(v2Key);
-  if (!stored) {
-    const v1 = await options.secrets.get(DM_SECRET_STORAGE_KEY_V1);
-    if (v1) {
-      stored = v1;
-      try {
-        await options.secrets.store(v2Key, v1);
-        options.onDiagnostic?.({
-          boundary: "dm.secret.migration",
-          phase: "persist_v2",
-          outcome: "ok",
-        });
-      } catch (err) {
-        options.onDiagnostic?.({
-          boundary: "dm.secret.migration",
-          phase: "persist_v2",
-          outcome: "failed",
-          errorClass: "persist_v2_failed",
-        });
-        throw err;
-      }
-
-      if (options.secrets.delete) {
-        try {
-          // Cleanup is best-effort and runs only after destination persistence succeeds.
-          await options.secrets.delete(DM_SECRET_STORAGE_KEY_V1);
-          options.onDiagnostic?.({
-            boundary: "dm.secret.migration",
-            phase: "cleanup_v1",
-            outcome: "ok",
-          });
-        } catch {
-          options.onDiagnostic?.({
-            boundary: "dm.secret.migration",
-            phase: "cleanup_v1",
-            outcome: "failed",
-            errorClass: "cleanup_v1_failed",
-          });
-        }
-      } else {
-        options.onDiagnostic?.({
-          boundary: "dm.secret.migration",
-          phase: "cleanup_v1",
-          outcome: "skipped",
-        });
-      }
-    }
-  }
-  if (stored) {
-    const secretKey = base64ToBytes(stored);
-    const keyPair = nacl.box.keyPair.fromSecretKey(secretKey);
-    return {
-      identity: { cipherSuite: "nacl.box.v1", publicKey: bytesToBase64(keyPair.publicKey) },
-      secretKeyBase64: stored,
-    };
-  }
-
-  const keyPair = nacl.box.keyPair();
-  const secretKeyBase64 = bytesToBase64(keyPair.secretKey);
-  await options.secrets.store(v2Key, secretKeyBase64);
+function keypairFromSecretKeyBase64(secretKeyBase64: string): DmKeypair {
+  const secretKey = base64ToBytes(secretKeyBase64);
+  const keyPair = nacl.box.keyPair.fromSecretKey(secretKey);
   return {
     identity: { cipherSuite: "nacl.box.v1", publicKey: bytesToBase64(keyPair.publicKey) },
     secretKeyBase64,
   };
+}
+
+async function persistV2AndCleanupV1(options: {
+  secrets: SecretStore;
+  v2Key: string;
+  v1Secret: string;
+  onDiagnostic?: (event: DmSecretMigrationDiagnostic) => void;
+}): Promise<void> {
+  try {
+    await options.secrets.store(options.v2Key, options.v1Secret);
+    options.onDiagnostic?.({
+      boundary: "dm.secret.migration",
+      phase: "persist_v2",
+      outcome: "ok",
+    });
+  } catch (err) {
+    options.onDiagnostic?.({
+      boundary: "dm.secret.migration",
+      phase: "persist_v2",
+      outcome: "failed",
+      errorClass: "persist_v2_failed",
+    });
+    throw err;
+  }
+
+  if (!options.secrets.delete) {
+    options.onDiagnostic?.({
+      boundary: "dm.secret.migration",
+      phase: "cleanup_v1",
+      outcome: "skipped",
+    });
+    return;
+  }
+
+  try {
+    await options.secrets.delete(DM_SECRET_STORAGE_KEY_V1);
+    options.onDiagnostic?.({
+      boundary: "dm.secret.migration",
+      phase: "cleanup_v1",
+      outcome: "ok",
+    });
+  } catch {
+    options.onDiagnostic?.({
+      boundary: "dm.secret.migration",
+      phase: "cleanup_v1",
+      outcome: "failed",
+      errorClass: "cleanup_v1_failed",
+    });
+  }
+}
+
+async function loadStoredOrMigratedSecret(options: {
+  githubUserId: GithubUserId;
+  secrets: SecretStore;
+  onDiagnostic?: (event: DmSecretMigrationDiagnostic) => void;
+}): Promise<string | undefined> {
+  const v2Key = dmSecretStorageKeyV2(options.githubUserId);
+  const existingV2 = await options.secrets.get(v2Key);
+  if (existingV2) return existingV2;
+
+  const v1 = await options.secrets.get(DM_SECRET_STORAGE_KEY_V1);
+  if (!v1) return undefined;
+  await persistV2AndCleanupV1({
+    secrets: options.secrets,
+    v2Key,
+    v1Secret: v1,
+    ...(options.onDiagnostic ? { onDiagnostic: options.onDiagnostic } : {}),
+  });
+  return v1;
+}
+
+async function createAndStoreKeypair(options: {
+  githubUserId: GithubUserId;
+  secrets: SecretStore;
+}): Promise<DmKeypair> {
+  const keyPair = nacl.box.keyPair();
+  const secretKeyBase64 = bytesToBase64(keyPair.secretKey);
+  await options.secrets.store(dmSecretStorageKeyV2(options.githubUserId), secretKeyBase64);
+  return {
+    identity: { cipherSuite: "nacl.box.v1", publicKey: bytesToBase64(keyPair.publicKey) },
+    secretKeyBase64,
+  };
+}
+
+export async function getOrCreateDmKeypair(options: {
+  githubUserId: GithubUserId;
+  secrets: SecretStore;
+  onDiagnostic?: (event: DmSecretMigrationDiagnostic) => void;
+}): Promise<DmKeypair> {
+  const stored = await loadStoredOrMigratedSecret(options);
+  if (stored) return keypairFromSecretKeyBase64(stored);
+  return createAndStoreKeypair(options);
 }
 
 export function encryptDmText(options: {

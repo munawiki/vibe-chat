@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
-import type { UiInbound } from "../src/contract/webviewProtocol.js";
+import type { UiInbound } from "../src/contract/protocol/index.js";
 import type { VscodeWebviewApi, WebviewContext } from "../webview-src/app/types.js";
 import { getElements } from "../webview-src/dom/elements.js";
 import { createInitialWebviewState } from "../webview-src/state/webviewState.js";
@@ -52,9 +52,9 @@ describe("webview profile feature", () => {
     };
 
     const state = createInitialWebviewState();
-    state.isConnected = true;
-    state.signedInGithubUserId = "1" as import("@vscode-chat/protocol").GithubUserId;
-    state.signedInIsModerator = true;
+    state.auth.isConnected = true;
+    state.auth.signedInGithubUserId = "1" as import("@vscode-chat/protocol").GithubUserId;
+    state.auth.signedInIsModerator = true;
 
     const els = getElements();
     let dmTabClicked = false;
@@ -116,9 +116,9 @@ describe("webview profile feature", () => {
     };
 
     const state = createInitialWebviewState();
-    state.isConnected = true;
-    state.signedInGithubUserId = "1" as import("@vscode-chat/protocol").GithubUserId;
-    state.signedInIsModerator = true;
+    state.auth.isConnected = true;
+    state.auth.signedInGithubUserId = "1" as import("@vscode-chat/protocol").GithubUserId;
+    state.auth.signedInIsModerator = true;
 
     const ctx: WebviewContext = { vscode, els: getElements(), state, queueTask: queueMicrotask };
     bindProfileUiEvents(ctx);
@@ -185,9 +185,9 @@ describe("webview profile feature", () => {
     };
 
     const state = createInitialWebviewState();
-    state.isConnected = true;
-    state.signedInGithubUserId = "1" as import("@vscode-chat/protocol").GithubUserId;
-    state.signedInIsModerator = true;
+    state.auth.isConnected = true;
+    state.auth.signedInGithubUserId = "1" as import("@vscode-chat/protocol").GithubUserId;
+    state.auth.signedInIsModerator = true;
 
     const ctx: WebviewContext = { vscode, els: getElements(), state, queueTask: queueMicrotask };
     bindProfileUiEvents(ctx);
@@ -279,15 +279,15 @@ describe("webview profile feature", () => {
     };
 
     const state = createInitialWebviewState();
-    state.isConnected = true;
-    state.signedInGithubUserId = "1" as import("@vscode-chat/protocol").GithubUserId;
-    state.signedInIsModerator = true;
+    state.auth.isConnected = true;
+    state.auth.signedInGithubUserId = "1" as import("@vscode-chat/protocol").GithubUserId;
+    state.auth.signedInIsModerator = true;
 
     const ctx: WebviewContext = { vscode, els: getElements(), state, queueTask: queueMicrotask };
     bindProfileUiEvents(ctx);
 
     openProfile(ctx, "me", "https://example.test/me.png");
-    state.activeProfileLogin = "";
+    state.overlay.activeProfileLogin = "";
     (document.getElementById("profileOpenOnGitHub") as HTMLButtonElement).click();
     expect(posted.some((m) => m.type === "ui/profile.openOnGitHub")).toBe(false);
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AuthUser, GithubUserId, ServerEvent } from "@vscode-chat/protocol";
 import { ChatRoomModeration } from "../src/room/moderation.js";
+import { MockWebSocket } from "./helpers/mockWebSocket.js";
 
 class MemoryStorage {
   private readonly data = new Map<string, unknown>();
@@ -15,25 +16,6 @@ class MemoryStorage {
 
 class FakeDurableObjectState {
   readonly storage = new MemoryStorage();
-}
-
-class FakeWebSocket {
-  readonly sent: string[] = [];
-  readonly closed: Array<{ code: number; reason: string }> = [];
-
-  constructor(private readonly user: AuthUser) {}
-
-  deserializeAttachment(): unknown {
-    return { user: this.user };
-  }
-
-  send(data: string): void {
-    this.sent.push(String(data));
-  }
-
-  close(code: number, reason: string): void {
-    this.closed.push({ code, reason });
-  }
 }
 
 function makeUser(options: { githubUserId: string; roles?: AuthUser["roles"] }): AuthUser {
@@ -51,19 +33,19 @@ describe("ChatRoomModeration", () => {
     const sockets: WebSocket[] = [];
 
     const errors: Array<{ code: string; message: string }> = [];
-    const moderation = new ChatRoomModeration(
+    const moderation = new ChatRoomModeration({
       state,
-      new Set<GithubUserId>(),
-      () => sockets,
-      () => {},
-      (_ws, err) => {
+      operatorDeniedGithubUserIds: new Set<GithubUserId>(),
+      getWebSockets: () => sockets,
+      sendEvent: () => {},
+      sendError: (_ws, err) => {
         errors.push({ code: err.code, message: err.message ?? err.code });
       },
-      () => {},
-    );
+      log: () => {},
+    });
 
     const actor = makeUser({ githubUserId: "1", roles: [] });
-    const actorWs = new FakeWebSocket(actor) as unknown as WebSocket;
+    const actorWs = new MockWebSocket(actor) as unknown as WebSocket;
     await moderation.handleUserDeny(actorWs, actor, "2" as GithubUserId);
     await moderation.handleUserAllow(actorWs, actor, "2" as GithubUserId);
 
@@ -76,24 +58,24 @@ describe("ChatRoomModeration", () => {
     const moderator = makeUser({ githubUserId: "1", roles: ["moderator"] });
     const target = makeUser({ githubUserId: "2", roles: [] });
 
-    const moderatorWs = new FakeWebSocket(moderator);
-    const targetWs = new FakeWebSocket(target);
+    const moderatorWs = new MockWebSocket(moderator);
+    const targetWs = new MockWebSocket(target);
     const sockets: WebSocket[] = [
       moderatorWs as unknown as WebSocket,
       targetWs as unknown as WebSocket,
     ];
 
-    const sentErrors: Array<{ ws: FakeWebSocket; code: string }> = [];
-    const moderation = new ChatRoomModeration(
+    const sentErrors: Array<{ ws: MockWebSocket; code: string }> = [];
+    const moderation = new ChatRoomModeration({
       state,
-      new Set<GithubUserId>(),
-      () => sockets,
-      () => {},
-      (ws, err) => {
-        sentErrors.push({ ws: ws as unknown as FakeWebSocket, code: err.code });
+      operatorDeniedGithubUserIds: new Set<GithubUserId>(),
+      getWebSockets: () => sockets,
+      sendEvent: () => {},
+      sendError: (ws, err) => {
+        sentErrors.push({ ws: ws as unknown as MockWebSocket, code: err.code });
       },
-      () => {},
-    );
+      log: () => {},
+    });
 
     await moderation.handleUserDeny(
       moderatorWs as unknown as WebSocket,
@@ -113,16 +95,16 @@ describe("ChatRoomModeration", () => {
 
     const operatorDenied = new Set<GithubUserId>(["3" as GithubUserId]);
     const errors2: Array<{ code: string; message: string }> = [];
-    const moderation2 = new ChatRoomModeration(
+    const moderation2 = new ChatRoomModeration({
       state,
-      operatorDenied,
-      () => sockets,
-      () => {},
-      (_ws, err) => {
+      operatorDeniedGithubUserIds: operatorDenied,
+      getWebSockets: () => sockets,
+      sendEvent: () => {},
+      sendError: (_ws, err) => {
         errors2.push({ code: err.code, message: err.message ?? err.code });
       },
-      () => {},
-    );
+      log: () => {},
+    });
 
     await moderation2.handleUserAllow(
       moderatorWs as unknown as WebSocket,
@@ -137,22 +119,25 @@ describe("ChatRoomModeration", () => {
   it("applies self-action guardrails and emits sorted snapshot payloads", async () => {
     const state = new FakeDurableObjectState() as unknown as DurableObjectState;
     const moderator = makeUser({ githubUserId: "9", roles: ["moderator"] });
-    const moderatorWs = new FakeWebSocket(moderator);
+    const moderatorWs = new MockWebSocket(moderator);
     const sockets: WebSocket[] = [moderatorWs as unknown as WebSocket];
 
     const errors: Array<{ code: string; message: string }> = [];
-    const moderation = new ChatRoomModeration(
+    const moderation = new ChatRoomModeration({
       state,
-      new Set<GithubUserId>(["11" as GithubUserId, "10" as GithubUserId]),
-      () => sockets,
-      (ws, event) => {
-        (ws as unknown as FakeWebSocket).send(JSON.stringify(event));
+      operatorDeniedGithubUserIds: new Set<GithubUserId>([
+        "11" as GithubUserId,
+        "10" as GithubUserId,
+      ]),
+      getWebSockets: () => sockets,
+      sendEvent: (ws, event) => {
+        (ws as unknown as MockWebSocket).send(JSON.stringify(event));
       },
-      (_ws, err) => {
+      sendError: (_ws, err) => {
         errors.push({ code: err.code, message: err.message ?? err.code });
       },
-      () => {},
-    );
+      log: () => {},
+    });
 
     await moderation.handleUserDeny(
       moderatorWs as unknown as WebSocket,

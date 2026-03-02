@@ -3,14 +3,14 @@ import { PROTOCOL_VERSION } from "@vscode-chat/protocol";
 import type { AuthUser, GithubUserId, ServerEvent } from "@vscode-chat/protocol";
 import type { ChatClientState } from "../src/net/chatClient.js";
 import { ChatViewModeration } from "../src/ui/chatView/moderation.js";
+import { createMockAuthUser } from "./helpers/mockAuthUser.js";
 
 function makeUser(options: { githubUserId: string; roles?: AuthUser["roles"] }): AuthUser {
-  return {
-    githubUserId: options.githubUserId as GithubUserId,
+  return createMockAuthUser({
+    githubUserId: options.githubUserId,
     login: "alice",
-    avatarUrl: "https://example.test/alice.png",
-    roles: options.roles ?? [],
-  };
+    roles: options.roles,
+  }) as AuthUser;
 }
 
 describe("ChatViewModeration", () => {

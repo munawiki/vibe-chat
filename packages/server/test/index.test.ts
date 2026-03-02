@@ -15,31 +15,11 @@ vi.mock("../src/session.js", () => ({
 }));
 
 import worker from "../src/index.js";
-
-type EnvStub = Parameters<(typeof worker)["fetch"]>[1];
-
-function createEnv(overrides?: Partial<EnvStub>): EnvStub {
-  const chatRoomStub = {
-    fetch: () => Promise.resolve(new Response("proxied", { status: 200 })),
-  };
-
-  return {
-    CHAT_ROOM: {
-      idFromName: (name: string) => name,
-      get: () => chatRoomStub,
-    },
-    DM_ROOM: {
-      idFromName: (name: string) => name,
-      get: () => chatRoomStub,
-    },
-    SESSION_SECRET: "x".repeat(32),
-    ...overrides,
-  } as unknown as EnvStub;
-}
+import { createMockEnv } from "./helpers/mockEnv.js";
 
 describe("worker fetch", () => {
   it("serves /health and 404s unknown paths", async () => {
-    const env = createEnv();
+    const env = createMockEnv();
 
     const health = await worker.fetch(new Request("https://example.test/health"), env);
     expect(health.status).toBe(200);
@@ -50,13 +30,13 @@ describe("worker fetch", () => {
   });
 
   it("rejects invalid config", async () => {
-    const env = createEnv({ CHAT_MESSAGE_RATE_WINDOW_MS: "0" });
+    const env = createMockEnv({ CHAT_MESSAGE_RATE_WINDOW_MS: "0" });
     const res = await worker.fetch(new Request("https://example.test/health"), env);
     expect(res.status).toBe(500);
   });
 
   it("handles /auth/exchange", async () => {
-    const env = createEnv();
+    const env = createMockEnv();
 
     const method = await worker.fetch(new Request("https://example.test/auth/exchange"), env);
     expect(method.status).toBe(405);
@@ -102,7 +82,7 @@ describe("worker fetch", () => {
   });
 
   it("handles /telemetry", async () => {
-    const env = createEnv();
+    const env = createMockEnv();
 
     const method = await worker.fetch(new Request("https://example.test/telemetry"), env);
     expect(method.status).toBe(405);
@@ -149,7 +129,7 @@ describe("worker fetch", () => {
   });
 
   it("proxies /ws to the chat room durable object", async () => {
-    const env = createEnv();
+    const env = createMockEnv();
 
     const notWs = await worker.fetch(new Request("https://example.test/ws"), env);
     expect(notWs.status).toBe(426);

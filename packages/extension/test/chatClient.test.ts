@@ -166,9 +166,24 @@ function createBusHarness(): {
   return { bus, events };
 }
 
+
+function resetWsHarness(): void {
+  wsHarness.sent.length = 0;
+  wsHarness.opened = 0;
+  wsHarness.lastOptions = undefined;
+  wsHarness.ws = undefined;
+}
+
+function resetReconnectHarness(): void {
+  reconnectHarness.scheduled.length = 0;
+  reconnectHarness.canceled = 0;
+}
+
 describe("ChatClient", () => {
   beforeEach(() => {
     wsHarness.openImpl = undefined;
+    resetWsHarness();
+    resetReconnectHarness();
   });
 
   it("warns when sending without an open socket", () => {
@@ -182,12 +197,8 @@ describe("ChatClient", () => {
   });
 
   it("opens a websocket, sends hello, and parses inbound events", async () => {
-    wsHarness.sent.length = 0;
-    wsHarness.opened = 0;
-    wsHarness.lastOptions = undefined;
-    wsHarness.ws = undefined;
-    reconnectHarness.scheduled.length = 0;
-    reconnectHarness.canceled = 0;
+    resetWsHarness();
+    resetReconnectHarness();
 
     const { output, warn } = createOutput();
     const { bus } = createBusHarness();
@@ -245,10 +256,7 @@ describe("ChatClient", () => {
   });
 
   it("rejects invalid client payloads and handles ws parse/send errors", async () => {
-    wsHarness.sent.length = 0;
-    wsHarness.opened = 0;
-    wsHarness.lastOptions = undefined;
-    wsHarness.ws = undefined;
+    resetWsHarness();
 
     const { output, error, warn } = createOutput();
     const { bus } = createBusHarness();
@@ -280,12 +288,8 @@ describe("ChatClient", () => {
   });
 
   it("emits bounded fallback diagnostics when legacy handshake classification is used", async () => {
-    wsHarness.sent.length = 0;
-    wsHarness.opened = 0;
-    wsHarness.lastOptions = undefined;
-    wsHarness.ws = undefined;
-    reconnectHarness.scheduled.length = 0;
-    reconnectHarness.canceled = 0;
+    resetWsHarness();
+    resetReconnectHarness();
     wsHarness.openImpl = (options) => {
       wsHarness.lastOptions = options;
       return Promise.resolve({
@@ -320,12 +324,8 @@ describe("ChatClient", () => {
   });
 
   it("suppresses reconnect scheduling for user-triggered disconnect closes", async () => {
-    wsHarness.sent.length = 0;
-    wsHarness.opened = 0;
-    wsHarness.lastOptions = undefined;
-    wsHarness.ws = undefined;
-    reconnectHarness.scheduled.length = 0;
-    reconnectHarness.canceled = 0;
+    resetWsHarness();
+    resetReconnectHarness();
 
     const { output } = createOutput();
     const { bus } = createBusHarness();
@@ -352,10 +352,7 @@ describe("ChatClient", () => {
   });
 
   it("serializes moderation deny payload reason only when non-empty", async () => {
-    wsHarness.sent.length = 0;
-    wsHarness.opened = 0;
-    wsHarness.lastOptions = undefined;
-    wsHarness.ws = undefined;
+    resetWsHarness();
 
     const { output } = createOutput();
     const { bus } = createBusHarness();
@@ -377,12 +374,8 @@ describe("ChatClient", () => {
   });
 
   it("serializes concurrent connect and disconnect requests deterministically", async () => {
-    wsHarness.sent.length = 0;
-    wsHarness.opened = 0;
-    wsHarness.lastOptions = undefined;
-    wsHarness.ws = undefined;
-    reconnectHarness.scheduled.length = 0;
-    reconnectHarness.canceled = 0;
+    resetWsHarness();
+    resetReconnectHarness();
 
     let releaseSession:
       | ((value: { githubAccountId: string; accessToken: string }) => void)

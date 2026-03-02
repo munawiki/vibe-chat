@@ -1,5 +1,11 @@
-import { WsHandshakeRejectionSchema, type WsHandshakeRejection } from "@vscode-chat/protocol";
+import { Readable } from "node:stream";
+import {
+  readBoundedBody,
+  WsHandshakeRejectionSchema,
+  type WsHandshakeRejection,
+} from "@vscode-chat/protocol";
 import WebSocket from "ws";
+import { WS_HANDSHAKE_BODY_TIMEOUT_MS, WS_HANDSHAKE_MAX_BODY_BYTES } from "../net/constants.js";
 import type { WsOpenError } from "../core/chatClientCore.js";
 
 export type WsOpenResult =
@@ -81,7 +87,10 @@ function waitForWsOpenOrHandshakeError(ws: WebSocket): Promise<WsOpenResult> {
         settle({ ok: false, error, cause: new Error(`ws_handshake_${status}`) });
       };
 
-      void readResponseBodyText(response, { maxBytes: 1024, timeoutMs: 1_000 })
+      void readResponseBodyText(response, {
+        maxBytes: WS_HANDSHAKE_MAX_BODY_BYTES,
+        timeoutMs: WS_HANDSHAKE_BODY_TIMEOUT_MS,
+      })
         .then((bodyText) => cleanupAndSettle(bodyText))
         .catch(() => cleanupAndSettle());
     };
@@ -148,73 +157,59 @@ function readResponseBodyText(
   response: NodeJS.ReadableStream,
   options: { maxBytes: number; timeoutMs: number },
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const settle = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      fn();
-    };
+  const toUtf8 = (chunks: Buffer[]): string => {
+    if (chunks.length === 0) return "";
+    return Buffer.concat(chunks).subarray(0, options.maxBytes).toString("utf8").trim();
+  };
 
-    const chunks: Buffer[] = [];
-    let bytes = 0;
-
-    const timeout = setTimeout(() => {
-      cleanup();
-      settle(() => resolve(bufferChunksToUtf8(chunks)));
-    }, options.timeoutMs);
-
-    const onData = (chunk: unknown) => {
-      if (typeof chunk === "string") {
-        const buf = Buffer.from(chunk, "utf8");
-        bytes += buf.byteLength;
-        chunks.push(buf);
-      } else if (Buffer.isBuffer(chunk)) {
-        bytes += chunk.byteLength;
-        chunks.push(chunk);
-      }
-
-      if (bytes >= options.maxBytes) {
-        cleanup();
-        settle(() => resolve(bufferChunksToUtf8(chunks, options.maxBytes)));
-      }
-    };
-
-    const onEnd = () => {
-      cleanup();
-      settle(() => resolve(bufferChunksToUtf8(chunks, options.maxBytes)));
-    };
-
-    const onError = (err: unknown) => {
-      cleanup();
-      const error = err instanceof Error ? err : new Error(String(err));
-      settle(() => reject(error));
-    };
-
-    const cleanup = () => {
-      clearTimeout(timeout);
-      response.off("data", onData);
-      response.off("end", onEnd);
-      response.off("error", onError);
-      try {
-        // Ensure the stream is drained and does not leak resources.
-        response.resume();
-      } catch {}
-    };
-
-    response.on("data", onData);
-    response.on("end", onEnd);
-    response.on("error", onError);
-    try {
-      response.resume();
-    } catch {}
+  return readBoundedBody({
+    source: responseBodyChunks(response),
+    maxBytes: options.maxBytes,
+    timeoutMs: options.timeoutMs,
+    chunkByteLength: (chunk) => chunk.byteLength,
+  }).then((result) => {
+    if (result.ok) return toUtf8(result.chunks);
+    if (result.error === "timeout" || result.error === "too_large") {
+      return toUtf8(result.chunks);
+    }
+    throw new Error("read_error");
   });
 }
 
-function bufferChunksToUtf8(chunks: Buffer[], maxBytes = Number.POSITIVE_INFINITY): string {
-  if (chunks.length === 0) return "";
+function asNodeReadable(response: NodeJS.ReadableStream): Readable {
+  if (response instanceof Readable) return response;
+  const wrapped = new Readable({ read() {} });
+  wrapped.wrap(response);
+  return wrapped;
+}
 
-  const buf = Buffer.concat(chunks);
-  const sliced = Number.isFinite(maxBytes) ? buf.subarray(0, maxBytes) : buf;
-  return sliced.toString("utf8").trim();
+function responseBodyChunks(response: NodeJS.ReadableStream): AsyncIterable<Buffer> {
+  const readable = asNodeReadable(response);
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<Buffer> {
+      const iterator = readable[Symbol.asyncIterator]();
+      return {
+        async next(): Promise<IteratorResult<Buffer>> {
+          while (true) {
+            const next = await iterator.next();
+            if (next.done) return { done: true, value: undefined };
+            if (typeof next.value === "string") {
+              return { done: false, value: Buffer.from(next.value, "utf8") };
+            }
+            if (Buffer.isBuffer(next.value)) {
+              return { done: false, value: next.value };
+            }
+            if (next.value instanceof Uint8Array) {
+              return { done: false, value: Buffer.from(next.value) };
+            }
+          }
+        },
+        async return(): Promise<IteratorResult<Buffer>> {
+          if (!readable.destroyed) readable.destroy();
+          await iterator.return?.();
+          return { done: true, value: undefined };
+        },
+      };
+    },
+  };
 }

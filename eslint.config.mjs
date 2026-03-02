@@ -62,6 +62,7 @@ export default [
           "./packages/extension/tsconfig.webview.json",
           "./packages/protocol/tsconfig.eslint.json",
           "./packages/server/tsconfig.json",
+          "./tsconfig.scripts.json",
         ],
       },
     },

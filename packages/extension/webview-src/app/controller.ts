@@ -1,10 +1,11 @@
-import { ExtOutboundSchema, type UiInbound } from "../../src/contract/webviewProtocol.js";
+import { ExtOutboundSchema, type UiInbound } from "../../src/contract/protocol/index.js";
 import { bindChatUiEvents } from "../features/chat.js";
 import { bindPresenceUiEvents } from "../features/presence.js";
 import { bindProfileUiEvents, openProfile } from "../features/profile.js";
 import { closeOverlay } from "../features/overlay.js";
 import { dispatchExtOutbound } from "./extRouter.js";
-import { renderChannelTabs, renderComposer, renderConversation, renderDmPanel } from "./render.js";
+import { renderComposer } from "./renderComposer.js";
+import { renderChannelTabs, renderConversation, renderDmPanel } from "./renderDm.js";
 import type { WebviewContext } from "./types.js";
 
 function openHeaderIdentityProfile(ctx: WebviewContext): void {
@@ -22,7 +23,7 @@ function bindShellUiEvents(ctx: WebviewContext): void {
   ctx.els.identity?.addEventListener("click", () => openHeaderIdentityProfile(ctx));
 
   ctx.els.channelGlobal?.addEventListener("click", () => {
-    ctx.state.activeChannel = "global";
+    ctx.state.channel.activeChannel = "global";
     renderChannelTabs(ctx);
     renderDmPanel(ctx);
     renderConversation(ctx);
@@ -30,13 +31,13 @@ function bindShellUiEvents(ctx: WebviewContext): void {
   });
 
   ctx.els.channelDm?.addEventListener("click", () => {
-    ctx.state.activeChannel = "dm";
-    if (!ctx.state.activeDmId && ctx.state.dmThreads.length > 0) {
-      ctx.state.activeDmId = ctx.state.dmThreads[0]?.dmId ?? null;
-      if (ctx.state.activeDmId) {
+    ctx.state.channel.activeChannel = "dm";
+    if (!ctx.state.channel.activeDmId && ctx.state.channel.dmThreads.length > 0) {
+      ctx.state.channel.activeDmId = ctx.state.channel.dmThreads[0]?.dmId ?? null;
+      if (ctx.state.channel.activeDmId) {
         ctx.vscode.postMessage({
           type: "ui/dm.thread.select",
-          dmId: ctx.state.activeDmId,
+          dmId: ctx.state.channel.activeDmId,
         } satisfies UiInbound);
       }
     }
@@ -47,7 +48,7 @@ function bindShellUiEvents(ctx: WebviewContext): void {
   });
 
   ctx.els.dmTrust?.addEventListener("click", () => {
-    const dmId = ctx.state.activeDmId;
+    const dmId = ctx.state.channel.activeDmId;
     if (!dmId) return;
     ctx.vscode.postMessage({ type: "ui/dm.peerKey.trust", dmId } satisfies UiInbound);
   });

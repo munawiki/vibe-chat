@@ -1,18 +1,17 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 import type { AuthUser } from "@vscode-chat/protocol";
-import type { ExtState, UiInbound } from "../src/contract/webviewProtocol.js";
+import type { ExtState, UiInbound } from "../src/contract/protocol/index.js";
 import type { VscodeWebviewApi, WebviewContext } from "../webview-src/app/types.js";
 import { getElements } from "../webview-src/dom/elements.js";
+import { renderComposer } from "../webview-src/app/renderComposer.js";
 import {
   renderChannelTabs,
-  renderComposer,
   renderConversation,
   renderDmPanel,
   renderDmWarning,
-  renderState,
-  setError,
-} from "../webview-src/app/render.js";
+} from "../webview-src/app/renderDm.js";
+import { renderState, setError } from "../webview-src/app/render.js";
 import { createInitialWebviewState } from "../webview-src/state/webviewState.js";
 
 function setupDom(): void {
@@ -82,8 +81,8 @@ describe("webview render state", () => {
     setupDom();
     const posted: UiInbound[] = [];
     const ctx = createCtx(posted);
-    ctx.state.isConnected = true;
-    ctx.state.activeChannel = "global";
+    ctx.state.auth.isConnected = true;
+    ctx.state.channel.activeChannel = "global";
     ctx.state.outbox.push({
       clientMessageId: "11111111-1111-1111-1111-111111111111",
       text: "pending",
@@ -119,8 +118,8 @@ describe("webview render state", () => {
     setupDom();
     const posted: UiInbound[] = [];
     const ctx = createCtx(posted);
-    ctx.state.isConnected = true;
-    ctx.state.activeChannel = "dm";
+    ctx.state.auth.isConnected = true;
+    ctx.state.channel.activeChannel = "dm";
 
     renderChannelTabs(ctx);
     renderDmPanel(ctx);
@@ -131,7 +130,7 @@ describe("webview render state", () => {
       "Select a DM thread…",
     );
 
-    ctx.state.dmThreads = [
+    ctx.state.channel.dmThreads = [
       {
         dmId: "dm:v1:1:2" as import("@vscode-chat/protocol").DmId,
         peer: createUser({ githubUserId: "2", login: "bob" }),
@@ -156,8 +155,8 @@ describe("webview render state", () => {
     expect((document.getElementById("dmWarning") as HTMLElement).hidden).toBe(false);
     expect((document.getElementById("btnDmTrust") as HTMLButtonElement).hidden).toBe(false);
 
-    ctx.state.dmThreads[0] = {
-      ...ctx.state.dmThreads[0],
+    ctx.state.channel.dmThreads[0] = {
+      ...ctx.state.channel.dmThreads[0],
       isBlocked: false,
       canTrustKey: false,
       warning: undefined,
@@ -165,7 +164,7 @@ describe("webview render state", () => {
     renderDmWarning(ctx);
     expect((document.getElementById("dmWarning") as HTMLElement).hidden).toBe(true);
 
-    ctx.state.activeDmId = "dm:v1:missing" as import("@vscode-chat/protocol").DmId;
+    ctx.state.channel.activeDmId = "dm:v1:missing" as import("@vscode-chat/protocol").DmId;
     renderComposer(ctx);
     expect((document.getElementById("input") as HTMLTextAreaElement).placeholder).toBe(
       "Message @user…",

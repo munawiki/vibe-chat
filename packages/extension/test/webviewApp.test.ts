@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 import type { AuthUser } from "@vscode-chat/protocol";
-import type { ExtOutbound, UiInbound } from "../src/contract/webviewProtocol.js";
+import type { ExtOutbound, UiInbound } from "../src/contract/protocol/index.js";
 import type { VscodeWebviewApi } from "../webview-src/app/types.js";
 
 type AcquireVsCodeApi = <T>() => VscodeWebviewApi<T>;

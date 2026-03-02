@@ -1,0 +1,5 @@
+export const WS_PING_INTERVAL_MS = 20_000;
+export const WS_PONG_TIMEOUT_MS = 60_000;
+
+export const WS_HANDSHAKE_MAX_BODY_BYTES = 1_024;
+export const WS_HANDSHAKE_BODY_TIMEOUT_MS = 1_000;

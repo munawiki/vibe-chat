@@ -5,17 +5,22 @@ import type {
   ExtModerationSnapshotMsg,
   ExtModerationUserAllowedMsg,
   ExtModerationUserDeniedMsg,
-} from "../../contract/webviewProtocol.js";
+} from "../../contract/protocol/index.js";
+import {
+  MODERATION_HANDLERS,
+  isModeratorActionConfirmedByActor,
+  isPendingMatch,
+  type ModerationAction,
+  type PendingModeration,
+} from "./moderationHandlers.js";
 
 export type ModerationSnapshot = {
   operatorDeniedGithubUserIds: GithubUserId[];
   roomDeniedGithubUserIds: GithubUserId[];
 };
 
-type PendingModeration = { action: "deny" | "allow"; targetGithubUserId: GithubUserId };
-
 export type ModerationSendCommand = {
-  action: "deny" | "allow";
+  action: ModerationAction;
   targetGithubUserId: GithubUserId;
 };
 
@@ -38,10 +43,11 @@ export class ChatViewModeration {
   }
 
   handleUiAction(
-    action: "deny" | "allow",
+    action: ModerationAction,
     targetGithubUserId: GithubUserId,
     clientState: ChatClientState,
   ): { outbound: ExtModerationActionMsg; send?: ModerationSendCommand } {
+    const handler = MODERATION_HANDLERS[action];
     if (clientState.authStatus !== "signedIn" || clientState.status !== "connected") {
       return {
         outbound: {
@@ -73,7 +79,7 @@ export class ChatViewModeration {
           action,
           targetGithubUserId,
           phase: "error",
-          message: action === "deny" ? "Self-ban is not allowed." : "Self-unban is not applicable.",
+          message: handler.selfActionMessage,
         },
       };
     }
@@ -195,19 +201,16 @@ export class ChatViewModeration {
   }
 
   private maybeResolvePendingModeration(options: {
-    action: "deny" | "allow";
+    action: ModerationAction;
     actorGithubUserId: GithubUserId;
     targetGithubUserId: GithubUserId;
     clientState: ChatClientState;
   }): ExtModerationActionMsg | undefined {
     const pending = this.pending;
-    if (!pending) return undefined;
-    if (pending.action !== options.action) return undefined;
-    if (pending.targetGithubUserId !== options.targetGithubUserId) return undefined;
-
-    const state = options.clientState;
-    if (state.authStatus !== "signedIn" || !("user" in state) || !state.user) return undefined;
-    if (state.user.githubUserId !== options.actorGithubUserId) return undefined;
+    if (!isPendingMatch(pending, options)) return undefined;
+    if (!isModeratorActionConfirmedByActor(options.clientState, options.actorGithubUserId)) {
+      return undefined;
+    }
 
     this.pending = undefined;
     return {
@@ -215,7 +218,7 @@ export class ChatViewModeration {
       action: pending.action,
       targetGithubUserId: pending.targetGithubUserId,
       phase: "success",
-      message: pending.action === "deny" ? "User banned." : "User unbanned.",
+      message: MODERATION_HANDLERS[pending.action].successMessage,
     };
   }
 }

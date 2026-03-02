@@ -1,17 +1,13 @@
 import {
-  GithubUserIdSchema,
   PROTOCOL_VERSION,
   type AuthUser,
   type GithubUserId,
   type ServerEvent,
 } from "@vscode-chat/protocol";
-import { ROOM_DENYLIST_KEY } from "./constants.js";
 import { tryGetSocketUser } from "../socketAttachment.js";
-
-type SendError = (
-  ws: WebSocket,
-  err: Pick<Extract<ServerEvent, { type: "server/error" }>, "code" | "message" | "retryAfterMs">,
-) => void;
+import type { ChatRoomDeps } from "./chatRoom/types.js";
+import { isDenied, isModerator, isOperatorDenied } from "./moderationGuard.js";
+import { loadDenylist, saveDenylist } from "./moderationPersistence.js";
 
 function compareGithubUserIds(a: GithubUserId, b: GithubUserId): number {
   if (a === b) return 0;
@@ -25,35 +21,35 @@ export class ChatRoomModeration {
   private readonly roomDeniedGithubUserIds = new Set<GithubUserId>();
 
   constructor(
-    private readonly state: DurableObjectState,
-    private readonly operatorDeniedGithubUserIds: ReadonlySet<GithubUserId>,
-    private readonly getWebSockets: () => WebSocket[],
-    private readonly sendEvent: (ws: WebSocket, event: ServerEvent) => void,
-    private readonly sendError: SendError,
-    private readonly log: (event: Record<string, unknown>) => void,
+    private readonly deps: ChatRoomDeps & {
+      readonly operatorDeniedGithubUserIds: ReadonlySet<GithubUserId>;
+    },
   ) {}
 
   get ready(): Promise<void> {
-    this.readyPromise ??= this.loadRoomDenylist();
+    this.readyPromise ??= this.initDenylist();
     return this.readyPromise;
   }
 
   isDeniedGithubUserId(githubUserId: GithubUserId): boolean {
-    return (
-      this.operatorDeniedGithubUserIds.has(githubUserId) ||
-      this.roomDeniedGithubUserIds.has(githubUserId)
-    );
+    return isDenied({
+      operatorDeniedGithubUserIds: this.deps.operatorDeniedGithubUserIds,
+      roomDeniedGithubUserIds: this.roomDeniedGithubUserIds,
+      githubUserId,
+    });
   }
 
   isModerator(user: AuthUser): boolean {
-    return user.roles.includes("moderator");
+    return isModerator(user);
   }
 
   sendSnapshot(ws: WebSocket): void {
-    this.sendEvent(ws, {
+    this.deps.sendEvent(ws, {
       version: PROTOCOL_VERSION,
       type: "server/moderation.snapshot",
-      operatorDeniedGithubUserIds: [...this.operatorDeniedGithubUserIds].sort(compareGithubUserIds),
+      operatorDeniedGithubUserIds: [...this.deps.operatorDeniedGithubUserIds].sort(
+        compareGithubUserIds,
+      ),
       roomDeniedGithubUserIds: [...this.roomDeniedGithubUserIds].sort(compareGithubUserIds),
     } satisfies ServerEvent);
   }
@@ -63,31 +59,13 @@ export class ChatRoomModeration {
     actor: AuthUser,
     targetGithubUserId: GithubUserId,
   ): Promise<void> {
-    if (!this.guardModeratorAction(ws, actor, targetGithubUserId, "Self-ban is not allowed.")) {
-      return;
-    }
-
-    await this.ready;
-
-    const wasDenied = this.isDeniedGithubUserId(targetGithubUserId);
-    if (!wasDenied) {
-      this.roomDeniedGithubUserIds.add(targetGithubUserId);
-      await this.persistRoomDenylist();
-    }
-
-    this.kickUser(targetGithubUserId);
-
-    this.log({
-      type: "moderation_user_denied",
-      actorGithubUserId: actor.githubUserId,
+    await this.handleModerationAction({
+      action: "deny",
+      ws,
+      actor,
       targetGithubUserId,
+      selfActionMessage: "Self-ban is not allowed.",
     });
-    this.sendToModerators({
-      version: PROTOCOL_VERSION,
-      type: "server/moderation.user.denied",
-      actorGithubUserId: actor.githubUserId,
-      targetGithubUserId,
-    } satisfies ServerEvent);
   }
 
   async handleUserAllow(
@@ -95,37 +73,61 @@ export class ChatRoomModeration {
     actor: AuthUser,
     targetGithubUserId: GithubUserId,
   ): Promise<void> {
+    await this.handleModerationAction({
+      action: "allow",
+      ws,
+      actor,
+      targetGithubUserId,
+      selfActionMessage: "Self-unban is not applicable.",
+    });
+  }
+
+  private async handleModerationAction(options: {
+    action: "deny" | "allow";
+    ws: WebSocket;
+    actor: AuthUser;
+    targetGithubUserId: GithubUserId;
+    selfActionMessage: string;
+  }): Promise<void> {
     if (
-      !this.guardModeratorAction(ws, actor, targetGithubUserId, "Self-unban is not applicable.")
+      !this.guardModeratorAction(
+        options.ws,
+        options.actor,
+        options.targetGithubUserId,
+        options.selfActionMessage,
+      )
     ) {
       return;
     }
 
     await this.ready;
 
-    if (this.operatorDeniedGithubUserIds.has(targetGithubUserId)) {
-      this.sendError(ws, {
-        code: "forbidden",
-        message: "Operator deny cannot be overridden by moderator unban.",
-      });
-      return;
+    if (options.action === "deny") {
+      await this.denyUser(options.targetGithubUserId);
+    } else {
+      if (isOperatorDenied(this.deps.operatorDeniedGithubUserIds, options.targetGithubUserId)) {
+        this.deps.sendError(options.ws, {
+          code: "forbidden",
+          message: "Operator deny cannot be overridden by moderator unban.",
+        });
+        return;
+      }
+      await this.allowUser(options.targetGithubUserId);
     }
 
-    const deleted = this.roomDeniedGithubUserIds.delete(targetGithubUserId);
-    if (deleted) {
-      await this.persistRoomDenylist();
-    }
-
-    this.log({
-      type: "moderation_user_allowed",
-      actorGithubUserId: actor.githubUserId,
-      targetGithubUserId,
+    this.deps.log({
+      type: options.action === "deny" ? "moderation_user_denied" : "moderation_user_allowed",
+      actorGithubUserId: options.actor.githubUserId,
+      targetGithubUserId: options.targetGithubUserId,
     });
     this.sendToModerators({
       version: PROTOCOL_VERSION,
-      type: "server/moderation.user.allowed",
-      actorGithubUserId: actor.githubUserId,
-      targetGithubUserId,
+      type:
+        options.action === "deny"
+          ? "server/moderation.user.denied"
+          : "server/moderation.user.allowed",
+      actorGithubUserId: options.actor.githubUserId,
+      targetGithubUserId: options.targetGithubUserId,
     } satisfies ServerEvent);
   }
 
@@ -135,47 +137,49 @@ export class ChatRoomModeration {
     targetGithubUserId: GithubUserId,
     selfActionMessage: string,
   ): boolean {
-    if (!this.isModerator(actor)) {
-      this.sendError(ws, { code: "forbidden", message: "Moderator role required." });
+    if (!isModerator(actor)) {
+      this.deps.sendError(ws, { code: "forbidden", message: "Moderator role required." });
       return false;
     }
 
     if (actor.githubUserId === targetGithubUserId) {
-      this.sendError(ws, { code: "forbidden", message: selfActionMessage });
+      this.deps.sendError(ws, { code: "forbidden", message: selfActionMessage });
       return false;
     }
 
     return true;
   }
 
-  private async loadRoomDenylist(): Promise<void> {
-    const saved = await this.state.storage.get<unknown>(ROOM_DENYLIST_KEY);
-    if (!Array.isArray(saved)) return;
-
-    for (const item of saved) {
-      if (typeof item !== "string") continue;
-      const trimmed = item.trim();
-      if (trimmed.length === 0) continue;
-      const parsed = GithubUserIdSchema.safeParse(trimmed);
-      if (!parsed.success) continue;
-      this.roomDeniedGithubUserIds.add(parsed.data);
+  private async initDenylist(): Promise<void> {
+    const loaded = await loadDenylist(this.deps.state);
+    for (const githubUserId of loaded) {
+      this.roomDeniedGithubUserIds.add(githubUserId);
     }
   }
 
-  private async persistRoomDenylist(): Promise<void> {
-    await this.state.storage.put(
-      ROOM_DENYLIST_KEY,
-      [...this.roomDeniedGithubUserIds].sort(compareGithubUserIds),
-    );
+  private async denyUser(targetGithubUserId: GithubUserId): Promise<void> {
+    const wasDenied = this.isDeniedGithubUserId(targetGithubUserId);
+    if (!wasDenied) {
+      this.roomDeniedGithubUserIds.add(targetGithubUserId);
+      await saveDenylist(this.deps.state, this.roomDeniedGithubUserIds);
+    }
+    this.kickUser(targetGithubUserId);
+  }
+
+  private async allowUser(targetGithubUserId: GithubUserId): Promise<void> {
+    const deleted = this.roomDeniedGithubUserIds.delete(targetGithubUserId);
+    if (deleted) {
+      await saveDenylist(this.deps.state, this.roomDeniedGithubUserIds);
+    }
   }
 
   private kickUser(targetGithubUserId: GithubUserId): void {
-    for (const socket of this.getWebSockets()) {
+    for (const socket of this.deps.getWebSockets()) {
       const user = tryGetSocketUser(socket);
       if (!user) continue;
       if (user.githubUserId !== targetGithubUserId) continue;
 
-      this.sendError(socket, {
+      this.deps.sendError(socket, {
         code: "forbidden",
         message: "You have been banned from the room.",
       });
@@ -185,7 +189,7 @@ export class ChatRoomModeration {
 
   private sendToModerators(event: ServerEvent): void {
     const json = JSON.stringify(event);
-    for (const socket of this.getWebSockets()) {
+    for (const socket of this.deps.getWebSockets()) {
       const user = tryGetSocketUser(socket);
       if (!user || !this.isModerator(user)) continue;
 

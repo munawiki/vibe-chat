@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from "vitest";
 import type { AuthUser } from "@vscode-chat/protocol";
-import type { UiInbound } from "../src/contract/webviewProtocol.js";
+import type { UiInbound } from "../src/contract/protocol/index.js";
 import type { VscodeWebviewApi, WebviewContext } from "../webview-src/app/types.js";
 import {
   addMessage,
@@ -55,7 +55,7 @@ describe("webview chat feature", () => {
       setState: () => {},
     };
     const state = createInitialWebviewState();
-    state.signedInLoginLowerCase = "alice";
+    state.auth.signedInLoginLowerCase = "alice";
 
     const ctx: WebviewContext = {
       vscode,
@@ -99,8 +99,8 @@ describe("webview chat feature", () => {
       setState: () => {},
     };
     const state = createInitialWebviewState();
-    state.isConnected = true;
-    state.activeChannel = "global";
+    state.auth.isConnected = true;
+    state.channel.activeChannel = "global";
 
     const ctx: WebviewContext = {
       vscode,
@@ -141,9 +141,9 @@ describe("webview chat feature", () => {
       setState: () => {},
     };
     const state = createInitialWebviewState();
-    state.isConnected = true;
-    state.activeChannel = "dm";
-    state.activeDmId = "dm:v1:1:2" as import("@vscode-chat/protocol").DmId;
+    state.auth.isConnected = true;
+    state.channel.activeChannel = "dm";
+    state.channel.activeDmId = "dm:v1:1:2" as import("@vscode-chat/protocol").DmId;
 
     const ctx: WebviewContext = {
       vscode,
@@ -184,7 +184,7 @@ describe("webview chat feature", () => {
       setState: () => {},
     };
     const state = createInitialWebviewState();
-    state.signedInLoginLowerCase = "alice";
+    state.auth.signedInLoginLowerCase = "alice";
     state.globalHistory = [
       {
         id: "g1",
@@ -260,8 +260,8 @@ describe("webview chat feature", () => {
       setState: () => {},
     };
     const state = createInitialWebviewState();
-    state.isConnected = true;
-    state.activeChannel = "dm";
+    state.auth.isConnected = true;
+    state.channel.activeChannel = "dm";
 
     const ctx: WebviewContext = {
       vscode,
@@ -276,7 +276,7 @@ describe("webview chat feature", () => {
     (document.getElementById("btnSend") as HTMLButtonElement).click();
     expect(posted).toEqual([]);
 
-    state.activeChannel = "global";
+    state.channel.activeChannel = "global";
     input.value = "   ";
     (document.getElementById("btnSend") as HTMLButtonElement).click();
     expect(posted).toEqual([]);

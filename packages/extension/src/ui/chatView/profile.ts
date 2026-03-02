@@ -1,5 +1,6 @@
-import { githubProfileErrorToMessage, type GitHubProfileService } from "../../net/githubProfile.js";
-import type { ExtProfileErrorMsg, ExtProfileResultMsg } from "../../contract/webviewProtocol.js";
+import { githubProfileErrorToMessage } from "../../net/githubProfile.js";
+import type { GitHubProfileService } from "../../net/githubProfile/service.js";
+import type { ExtProfileErrorMsg, ExtProfileResultMsg } from "../../contract/protocol/index.js";
 
 export async function fetchProfileMessage(
   profiles: GitHubProfileService,

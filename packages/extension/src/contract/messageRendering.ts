@@ -28,32 +28,23 @@ export function tokenizeMessageText(messageText: string): MessageToken[] {
 }
 
 function tokenizeCodeFences(messageText: string): FenceToken[] {
+  const segments = messageText.split("```");
+  if (segments.length % 2 === 0) return [{ kind: "text", text: messageText }];
+
   const out: FenceToken[] = [];
+  pushMergedText(out, segments[0] ?? "");
 
-  let cursor = 0;
-  while (cursor < messageText.length) {
-    const start = messageText.indexOf("```", cursor);
-    if (start === -1) {
-      pushMergedText(out, messageText.slice(cursor));
-      break;
-    }
-
-    const end = messageText.indexOf("```", start + 3);
-    if (end === -1) return [{ kind: "text", text: messageText }];
-
-    pushMergedText(out, messageText.slice(cursor, start));
-
-    const afterFence = start + 3;
-    const firstNewline = messageText.indexOf("\n", afterFence);
-
-    const rawInfo =
-      firstNewline !== -1 && firstNewline < end ? messageText.slice(afterFence, firstNewline) : "";
-    const languageHint = normalizeFenceInfoToLanguageHint(rawInfo);
-
-    const codeStart = firstNewline !== -1 && firstNewline < end ? firstNewline + 1 : afterFence;
-    out.push({ kind: "codeBlock", text: messageText.slice(codeStart, end), languageHint });
-
-    cursor = end + 3;
+  for (let i = 1; i < segments.length; i += 2) {
+    const fenceContent = segments[i] ?? "";
+    const newlineIndex = fenceContent.indexOf("\n");
+    const rawInfo = newlineIndex === -1 ? "" : fenceContent.slice(0, newlineIndex);
+    const codeText = newlineIndex === -1 ? fenceContent : fenceContent.slice(newlineIndex + 1);
+    out.push({
+      kind: "codeBlock",
+      text: codeText,
+      languageHint: normalizeFenceInfoToLanguageHint(rawInfo),
+    });
+    pushMergedText(out, segments[i + 1] ?? "");
   }
 
   return out;

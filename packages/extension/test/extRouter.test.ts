@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 import type { AuthUser } from "@vscode-chat/protocol";
-import type { UiInbound } from "../src/contract/webviewProtocol.js";
+import type { UiInbound } from "../src/contract/protocol/index.js";
 import type { VscodeWebviewApi, WebviewContext } from "../webview-src/app/types.js";
 import { dispatchExtOutbound } from "../webview-src/app/extRouter.js";
 import { getElements } from "../webview-src/dom/elements.js";
@@ -38,8 +38,8 @@ describe("extRouter outbox reconciliation", () => {
       setState: () => {},
     };
     const state = createInitialWebviewState();
-    state.activeChannel = "global";
-    state.isConnected = true;
+    state.channel.activeChannel = "global";
+    state.auth.isConnected = true;
     state.outbox.push({
       clientMessageId: "client-1",
       text: "hello",
@@ -87,8 +87,8 @@ describe("extRouter outbox reconciliation", () => {
       setState: () => {},
     };
     const state = createInitialWebviewState();
-    state.activeChannel = "global";
-    state.isConnected = true;
+    state.channel.activeChannel = "global";
+    state.auth.isConnected = true;
     state.outbox.push({
       clientMessageId: "client-2",
       text: "pending",

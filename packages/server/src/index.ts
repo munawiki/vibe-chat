@@ -1,12 +1,24 @@
 import { z } from "zod";
-export { ChatRoom } from "./room.js";
-export { DmRoom } from "./dm.js";
+export { ChatRoom } from "./room/chatRoom.js";
+export { DmRoom } from "./dm/dmRoom.js";
 import { exchangeGithubTokenForSession } from "./session.js";
 import { TelemetryEventSchema } from "@vscode-chat/protocol";
 import { parseServerConfig } from "./config.js";
+import {
+  AUTH_EXCHANGE_MAX_BODY_BYTES,
+  AUTH_EXCHANGE_RATE_MAX_COUNT,
+  AUTH_EXCHANGE_RATE_WINDOW_MS,
+  MAX_TRACKED_RATE_LIMIT_KEYS,
+  REQUEST_BODY_TIMEOUT_MS,
+  TELEMETRY_MAX_BODY_BYTES,
+  TELEMETRY_RATE_MAX_COUNT,
+  TELEMETRY_RATE_WINDOW_MS,
+} from "./constants.js";
 import { json } from "./http.js";
-import { checkFixedWindowRateLimit, getClientIp, readRequestJsonWithLimit } from "./util.js";
-import type { RateWindow } from "./util.js";
+import { enforceFixedWindowRateLimit } from "./middleware/rateLimit.js";
+import type { RateWindow } from "./util/rateLimitStore.js";
+import { readRequestJsonWithLimit } from "./util/requestBody.js";
+import { log } from "./util/structuredLog.js";
 
 export interface Env {
   CHAT_ROOM: DurableObjectNamespace;
@@ -28,21 +40,37 @@ const ExchangeRequestSchema = z.object({
   accessToken: z.string().min(1),
 });
 
-const AUTH_EXCHANGE_RATE_WINDOW_MS = 60_000;
-const AUTH_EXCHANGE_RATE_MAX_COUNT = 10;
-const AUTH_EXCHANGE_RATE_MAX_TRACKED_KEYS = 20_000;
 const authExchangeRateByIp = new Map<string, RateWindow>();
-const AUTH_EXCHANGE_MAX_BODY_BYTES = 2_048;
 
-const TELEMETRY_RATE_WINDOW_MS = 60_000;
-const TELEMETRY_RATE_MAX_COUNT = 120;
-const TELEMETRY_RATE_MAX_TRACKED_KEYS = 20_000;
 const telemetryRateByIp = new Map<string, RateWindow>();
-const TELEMETRY_MAX_BODY_BYTES = 4_096;
 
 const NO_STORE_HEADERS = {
   "cache-control": "no-store",
 } as const;
+
+async function parseAuthExchangeBody(
+  request: Request,
+): Promise<{ ok: true; accessToken: string } | { ok: false; response: Response }> {
+  const body = await readRequestJsonWithLimit(request, {
+    maxBytes: AUTH_EXCHANGE_MAX_BODY_BYTES,
+    timeoutMs: REQUEST_BODY_TIMEOUT_MS,
+  });
+  if (!body.ok) {
+    return {
+      ok: false,
+      response:
+        body.error === "too_large"
+          ? json({ error: "payload_too_large" }, 413, NO_STORE_HEADERS)
+          : json({ error: "invalid_json" }, 400, NO_STORE_HEADERS),
+    };
+  }
+
+  const parsed = ExchangeRequestSchema.safeParse(body.json);
+  if (!parsed.success) {
+    return { ok: false, response: json({ error: "invalid_payload" }, 400, NO_STORE_HEADERS) };
+  }
+  return { ok: true, accessToken: parsed.data.accessToken };
+}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -74,39 +102,23 @@ async function handleAuthExchange(request: Request, env: Env): Promise<Response>
     return json({ error: "method_not_allowed" }, 405, NO_STORE_HEADERS);
   }
 
-  const clientIp = getClientIp(request);
-  if (clientIp) {
-    const rateCheck = checkFixedWindowRateLimit(clientIp, authExchangeRateByIp, {
-      windowMs: AUTH_EXCHANGE_RATE_WINDOW_MS,
-      maxCount: AUTH_EXCHANGE_RATE_MAX_COUNT,
-      maxTrackedKeys: AUTH_EXCHANGE_RATE_MAX_TRACKED_KEYS,
-    });
-    if (!rateCheck.allowed) {
-      log({ type: "auth_exchange_rate_limited", retryAfterMs: rateCheck.retryAfterMs });
-      return json({ error: "rate_limited", retryAfterMs: rateCheck.retryAfterMs }, 429, {
-        ...NO_STORE_HEADERS,
-        "retry-after": String(Math.ceil(rateCheck.retryAfterMs / 1000)),
-      });
-    }
-  }
-
-  const body = await readRequestJsonWithLimit(request, {
-    maxBytes: AUTH_EXCHANGE_MAX_BODY_BYTES,
-    timeoutMs: 1_000,
+  const rateLimitResponse = enforceFixedWindowRateLimit(request, authExchangeRateByIp, {
+    windowMs: AUTH_EXCHANGE_RATE_WINDOW_MS,
+    maxCount: AUTH_EXCHANGE_RATE_MAX_COUNT,
+    maxTrackedKeys: MAX_TRACKED_RATE_LIMIT_KEYS,
+    noStore: true,
   });
-  if (!body.ok) {
-    return body.error === "too_large"
-      ? json({ error: "payload_too_large" }, 413, NO_STORE_HEADERS)
-      : json({ error: "invalid_json" }, 400, NO_STORE_HEADERS);
+  if (rateLimitResponse) {
+    const retryAfterMs = Number(rateLimitResponse.headers.get("retry-after") ?? "0") * 1000;
+    log({ type: "auth_exchange_rate_limited", retryAfterMs });
+    return rateLimitResponse;
   }
 
-  const parsed = ExchangeRequestSchema.safeParse(body.json);
-  if (!parsed.success) {
-    return json({ error: "invalid_payload" }, 400, NO_STORE_HEADERS);
-  }
+  const parsedBody = await parseAuthExchangeBody(request);
+  if (!parsedBody.ok) return parsedBody.response;
 
   try {
-    const session = await exchangeGithubTokenForSession(parsed.data.accessToken, env);
+    const session = await exchangeGithubTokenForSession(parsedBody.accessToken, env);
     log({ type: "auth_exchange_success" });
     return json(session, 200, NO_STORE_HEADERS);
   } catch (err: unknown) {
@@ -121,23 +133,16 @@ async function handleTelemetry(request: Request): Promise<Response> {
     return json({ error: "method_not_allowed" }, 405);
   }
 
-  const clientIp = getClientIp(request);
-  if (clientIp) {
-    const rateCheck = checkFixedWindowRateLimit(clientIp, telemetryRateByIp, {
-      windowMs: TELEMETRY_RATE_WINDOW_MS,
-      maxCount: TELEMETRY_RATE_MAX_COUNT,
-      maxTrackedKeys: TELEMETRY_RATE_MAX_TRACKED_KEYS,
-    });
-    if (!rateCheck.allowed) {
-      return json({ error: "rate_limited", retryAfterMs: rateCheck.retryAfterMs }, 429, {
-        "retry-after": String(Math.ceil(rateCheck.retryAfterMs / 1000)),
-      });
-    }
-  }
+  const rateLimitResponse = enforceFixedWindowRateLimit(request, telemetryRateByIp, {
+    windowMs: TELEMETRY_RATE_WINDOW_MS,
+    maxCount: TELEMETRY_RATE_MAX_COUNT,
+    maxTrackedKeys: MAX_TRACKED_RATE_LIMIT_KEYS,
+  });
+  if (rateLimitResponse) return rateLimitResponse;
 
   const body = await readRequestJsonWithLimit(request, {
     maxBytes: TELEMETRY_MAX_BODY_BYTES,
-    timeoutMs: 1_000,
+    timeoutMs: REQUEST_BODY_TIMEOUT_MS,
   });
   if (!body.ok) {
     return body.error === "too_large"
@@ -162,14 +167,4 @@ function handleWebSocket(request: Request, env: Env): Promise<Response> | Respon
   const id = env.CHAT_ROOM.idFromName("global");
   const stub = env.CHAT_ROOM.get(id);
   return stub.fetch(request);
-}
-
-function log(event: Record<string, unknown>): void {
-  // NOTE: Keep logs structured and privacy-preserving. Never include tokens, ciphertext, or key material.
-  console.log(
-    JSON.stringify({
-      ts: new Date().toISOString(),
-      ...event,
-    }),
-  );
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { PROTOCOL_VERSION } from "@vscode-chat/protocol";
 import type { AuthUser, GithubUserId, PresenceSnapshot, ServerEvent } from "@vscode-chat/protocol";
+import { createMockAuthUser } from "./helpers/mockAuthUser.js";
 
 type Disposable = { dispose: () => void };
 
@@ -68,12 +69,10 @@ class ChatClientStub {
 }
 
 function makeUser(options: { githubUserId: string }): AuthUser {
-  return {
-    githubUserId: options.githubUserId as GithubUserId,
+  return createMockAuthUser({
+    githubUserId: options.githubUserId,
     login: "alice",
-    avatarUrl: "https://example.test/alice.png",
-    roles: [],
-  };
+  }) as AuthUser;
 }
 
 describe("ChatStatusBar", () => {
